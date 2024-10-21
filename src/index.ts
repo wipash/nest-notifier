@@ -1,4 +1,4 @@
-import { SlackPayload, AirtableRecord, Config } from './types';
+import { SlackPayload, AirtableRecord, Config, SlackAPIResponse } from './types';
 
 export interface Env {
   SLACK_BOT_TOKEN: string;
@@ -58,15 +58,29 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
         elements: [
           {
             type: 'button',
+            style: 'primary',
             text: {
               type: 'plain_text',
-              text: config.buttonText,
+              text: config.approveButtonText,
             },
             value: JSON.stringify({
               recordId: record.id,
               statusFieldName: config.statusFieldName,
             }),
-            action_id: 'approve_application',
+            action_id: 'approve',
+          },
+          {
+            type: 'button',
+            style: 'danger',
+            text: {
+              type: 'plain_text',
+              text: "Ignore",
+            },
+            value: JSON.stringify({
+              recordId: record.id,
+              statusFieldName: config.statusFieldName,
+            }),
+            action_id: 'ignore',
           },
         ],
       },
@@ -84,7 +98,7 @@ async function sendSlackMessage(token: string, channelId: string, message: Slack
     url: 'https://slack.com/api/chat.postMessage',
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token.substring(0, 10)}...`, // Log only part of the token for security
+      Authorization: `Bearer ${token.substring(0, 5)}...`, // Log only part of the token for security
       'Content-Type': 'application/json',
     },
     body: requestBody,
@@ -99,7 +113,7 @@ async function sendSlackMessage(token: string, channelId: string, message: Slack
     body: requestBody,
   });
 
-  const responseBody = await slackResponse.json();
+  const responseBody = (await slackResponse.json()) as SlackAPIResponse;
 
   console.log('Slack API Response:', {
     status: slackResponse.status,
@@ -119,17 +133,42 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
   const formData = await request.formData();
   const payload = JSON.parse(formData.get('payload') as string) as any;
 
-  if (payload.type === 'block_actions' && payload.actions[0].action_id === 'approve_application') {
+  if (payload.type === 'block_actions' && (payload.actions[0].action_id === 'approve' || payload.actions[0].action_id === 'ignore')) {
     const value = JSON.parse(payload.actions[0].value);
+    const action = payload.actions[0].action_id;
+    const userName = payload.user.name;
 
-    // Update Airtable record
-    await updateAirtableRecord(env, value.recordId, value.statusFieldName);
+    if (action === 'approve') {
+      // Update Airtable record
+      await updateAirtableRecord(env, value.recordId, value.statusFieldName);
+    }
 
     // Update Slack message
-    await updateSlackMessage(env.SLACK_BOT_TOKEN, payload.container.channel_id, payload.container.message_ts);
+    const updatedMessage = formatUpdatedMessage(payload.message, action, userName);
+    await updateSlackMessage(env.SLACK_BOT_TOKEN, payload.container.channel_id, payload.container.message_ts, updatedMessage);
   }
 
   return new Response('Interaction handled', { status: 200 });
+}
+
+function formatUpdatedMessage(originalMessage: any, action: string, userName: string): SlackPayload {
+  const updatedBlocks = originalMessage.blocks.map((block: any) => {
+    if (block.type === 'actions') {
+      return {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*${action === 'approve' ? 'Approved' : 'Ignored'}* by ${userName}`,
+        },
+      };
+    }
+    return block;
+  });
+
+  return {
+    text: originalMessage.text,
+    blocks: updatedBlocks,
+  };
 }
 
 async function updateAirtableRecord(env: Env, recordId: string, statusFieldName: string): Promise<void> {
@@ -151,7 +190,7 @@ async function updateAirtableRecord(env: Env, recordId: string, statusFieldName:
   }
 }
 
-async function updateSlackMessage(token: string, channelId: string, messageTs: string): Promise<void> {
+async function updateSlackMessage(token: string, channelId: string, messageTs: string, updatedMessage: SlackPayload): Promise<void> {
   const updateResponse = await fetch('https://slack.com/api/chat.update', {
     method: 'POST',
     headers: {
@@ -161,16 +200,7 @@ async function updateSlackMessage(token: string, channelId: string, messageTs: s
     body: JSON.stringify({
       channel: channelId,
       ts: messageTs,
-      text: 'Application approved!',
-      blocks: [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: 'Application approved!',
-          },
-        },
-      ],
+      ...updatedMessage,
     }),
   });
 
