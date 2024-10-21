@@ -21,3 +21,8 @@ export interface SlackAPIResponse {
   error?: string;
   [key: string]: any;
 }
+
+export interface ChannelInfo {
+  channelId: string;
+  ts?: string;  // Optional because it's not set initially
+}

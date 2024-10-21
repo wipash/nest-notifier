@@ -1,4 +1,4 @@
-import { SlackPayload, AirtableRecord, Config, SlackAPIResponse } from './types';
+import { SlackPayload, AirtableRecord, Config, SlackAPIResponse, ChannelInfo } from './types';
 
 export interface Env {
   SLACK_BOT_TOKEN: string;
@@ -31,25 +31,31 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   const message = formatSlackMessage(record, config);
 
   // Send message to all specified Slack channels
-  const channelIds = config.slackChannelIds;
-  const messagePromises = channelIds.map(channelId =>
-    sendSlackMessage(env.SLACK_BOT_TOKEN, channelId, message)
-  );
+  const channelIds = config.slackChannelIds; // Assume this is now an array of channel IDs
+  console.log('Sending messages to channels:', channelIds);
 
-  const results = await Promise.all(messagePromises);
+  const channelInfo: ChannelInfo[] = channelIds.map((channelId) => ({ channelId }));
 
-  // Collect all channel IDs and message timestamps
-  const channelInfo = results.map((result, index) => ({
-    channelId: channelIds[index],
-    ts: result.ts,
-  }));
+  const messagePromises = channelIds.map((channelId) => sendSlackMessage(env.SLACK_BOT_TOKEN, channelId, message, channelInfo));
 
-  // Update all messages with the channel info in metadata
-  await Promise.all(results.map(result =>
-    updateSlackMessageMetadata(env.SLACK_BOT_TOKEN, result.channel, result.ts, channelInfo)
-  ));
+  try {
+    const results = await Promise.all(messagePromises);
+    console.log('Messages sent successfully:', results);
 
-  return new Response('Webhook processed', { status: 200 });
+    // Update channelInfo with message timestamps
+    results.forEach((result, index) => {
+      if (channelInfo[index]) {
+        channelInfo[index].ts = result.ts;
+      }
+    });
+
+    console.log('Updated channel info:', channelInfo);
+
+    return new Response('Webhook processed', { status: 200 });
+  } catch (error) {
+    console.error('Error processing webhook:', error);
+    return new Response('Error processing webhook', { status: 500 });
+  }
 }
 
 function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayload {
@@ -89,7 +95,7 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
             style: 'danger',
             text: {
               type: 'plain_text',
-              text: "Ignore",
+              text: 'Ignore',
             },
             value: JSON.stringify({
               recordId: record.id,
@@ -103,11 +109,24 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
   };
 }
 
-async function sendSlackMessage(token: string, channelId: string, message: SlackPayload): Promise<SlackAPIResponse> {
+async function sendSlackMessage(
+  token: string,
+  channelId: string,
+  message: SlackPayload,
+  channelInfo: ChannelInfo[]
+): Promise<SlackAPIResponse> {
   const requestBody = JSON.stringify({
     channel: channelId,
     ...message,
+    metadata: {
+      event_type: 'multi_channel_message',
+      event_payload: {
+        channel_info: channelInfo,
+      },
+    },
   });
+
+  console.log(`Sending Slack message to channel ${channelId}:`, requestBody);
 
   const slackResponse = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
@@ -118,43 +137,23 @@ async function sendSlackMessage(token: string, channelId: string, message: Slack
     body: requestBody,
   });
 
-  const responseBody = await slackResponse.json() as SlackAPIResponse;
+  const responseBody = (await slackResponse.json()) as SlackAPIResponse;
 
   if (!slackResponse.ok || !responseBody.ok) {
     console.error('Slack API Error:', responseBody);
     throw new Error(`Failed to send Slack message: ${responseBody.error}`);
   }
 
+  console.log(`Successfully sent message to channel ${channelId}:`, responseBody);
+
   return responseBody;
-}
-
-async function updateSlackMessageMetadata(token: string, channelId: string, ts: string, channelInfo: any[]): Promise<void> {
-  const updateResponse = await fetch('https://slack.com/api/chat.update', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      channel: channelId,
-      ts: ts,
-      metadata: {
-        event_type: "multi_channel_message",
-        event_payload: {
-          channel_info: channelInfo,
-        },
-      },
-    }),
-  });
-
-  if (!updateResponse.ok) {
-    throw new Error(`Failed to update Slack message metadata: ${updateResponse.statusText}`);
-  }
 }
 
 async function handleSlackInteraction(request: Request, env: Env): Promise<Response> {
   const formData = await request.formData();
   const payload = JSON.parse(formData.get('payload') as string) as any;
+
+  console.log('Received Slack interaction payload:', JSON.stringify(payload, null, 2));
 
   if (payload.type === 'block_actions' && (payload.actions[0].action_id === 'approve' || payload.actions[0].action_id === 'ignore')) {
     const value = JSON.parse(payload.actions[0].value);
@@ -167,13 +166,31 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
     }
 
     // Get channel info from metadata
-    const channelInfo = payload.message.metadata.event_payload.channel_info;
+    let channelInfo: ChannelInfo[] = [];
+    if (payload.message && payload.message.metadata && payload.message.metadata.event_payload) {
+      channelInfo = payload.message.metadata.event_payload.channel_info || [];
+    } else {
+      console.warn('Message metadata not found or incomplete. Falling back to single channel update.');
+      channelInfo = [
+        {
+          channelId: payload.channel.id,
+          ts: payload.message.ts,
+        },
+      ];
+    }
 
-    // Update Slack message in all channels
+    console.log('Channel info for updates:', channelInfo);
+
+    // Update Slack message in all channels (or just the current channel if metadata is missing)
     const updatedMessage = formatUpdatedMessage(payload.message, action, userName);
-    await Promise.all(channelInfo.map((info: any) =>
-      updateSlackMessage(env.SLACK_BOT_TOKEN, info.channelId, info.ts, updatedMessage)
-    ));
+    try {
+      await Promise.all(
+        channelInfo.map((info: ChannelInfo) => updateSlackMessage(env.SLACK_BOT_TOKEN, info.channelId, info.ts!, updatedMessage))
+      );
+      console.log('Successfully updated messages in all channels');
+    } catch (error) {
+      console.error('Error updating messages:', error);
+    }
   }
 
   return new Response('Interaction handled', { status: 200 });
