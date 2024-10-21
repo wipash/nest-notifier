@@ -29,10 +29,25 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 
   // Format the Slack message
   const message = formatSlackMessage(record, config);
-  console.log(config);
 
-  // Send message to Slack
-  await sendSlackMessage(env.SLACK_BOT_TOKEN, config.slackChannelId, message);
+  // Send message to all specified Slack channels
+  const channelIds = config.slackChannelIds;
+  const messagePromises = channelIds.map(channelId =>
+    sendSlackMessage(env.SLACK_BOT_TOKEN, channelId, message)
+  );
+
+  const results = await Promise.all(messagePromises);
+
+  // Collect all channel IDs and message timestamps
+  const channelInfo = results.map((result, index) => ({
+    channelId: channelIds[index],
+    ts: result.ts,
+  }));
+
+  // Update all messages with the channel info in metadata
+  await Promise.all(results.map(result =>
+    updateSlackMessageMetadata(env.SLACK_BOT_TOKEN, result.channel, result.ts, channelInfo)
+  ));
 
   return new Response('Webhook processed', { status: 200 });
 }
@@ -88,20 +103,10 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
   };
 }
 
-async function sendSlackMessage(token: string, channelId: string, message: SlackPayload): Promise<void> {
+async function sendSlackMessage(token: string, channelId: string, message: SlackPayload): Promise<SlackAPIResponse> {
   const requestBody = JSON.stringify({
     channel: channelId,
     ...message,
-  });
-
-  console.log('Sending Slack message with:', {
-    url: 'https://slack.com/api/chat.postMessage',
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token.substring(0, 5)}...`, // Log only part of the token for security
-      'Content-Type': 'application/json',
-    },
-    body: requestBody,
   });
 
   const slackResponse = await fetch('https://slack.com/api/chat.postMessage', {
@@ -113,20 +118,38 @@ async function sendSlackMessage(token: string, channelId: string, message: Slack
     body: requestBody,
   });
 
-  const responseBody = (await slackResponse.json()) as SlackAPIResponse;
-
-  console.log('Slack API Response:', {
-    status: slackResponse.status,
-    statusText: slackResponse.statusText,
-    body: responseBody,
-  });
+  const responseBody = await slackResponse.json() as SlackAPIResponse;
 
   if (!slackResponse.ok || !responseBody.ok) {
     console.error('Slack API Error:', responseBody);
     throw new Error(`Failed to send Slack message: ${responseBody.error}`);
   }
 
-  console.log('Slack message sent successfully:', responseBody);
+  return responseBody;
+}
+
+async function updateSlackMessageMetadata(token: string, channelId: string, ts: string, channelInfo: any[]): Promise<void> {
+  const updateResponse = await fetch('https://slack.com/api/chat.update', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      channel: channelId,
+      ts: ts,
+      metadata: {
+        event_type: "multi_channel_message",
+        event_payload: {
+          channel_info: channelInfo,
+        },
+      },
+    }),
+  });
+
+  if (!updateResponse.ok) {
+    throw new Error(`Failed to update Slack message metadata: ${updateResponse.statusText}`);
+  }
 }
 
 async function handleSlackInteraction(request: Request, env: Env): Promise<Response> {
@@ -143,9 +166,14 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
       await updateAirtableRecord(env, value.recordId, value.statusFieldName);
     }
 
-    // Update Slack message
+    // Get channel info from metadata
+    const channelInfo = payload.message.metadata.event_payload.channel_info;
+
+    // Update Slack message in all channels
     const updatedMessage = formatUpdatedMessage(payload.message, action, userName);
-    await updateSlackMessage(env.SLACK_BOT_TOKEN, payload.container.channel_id, payload.container.message_ts, updatedMessage);
+    await Promise.all(channelInfo.map((info: any) =>
+      updateSlackMessage(env.SLACK_BOT_TOKEN, info.channelId, info.ts, updatedMessage)
+    ));
   }
 
   return new Response('Interaction handled', { status: 200 });

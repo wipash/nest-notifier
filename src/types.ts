@@ -9,7 +9,7 @@ export interface AirtableRecord {
 }
 
 export interface Config {
-  slackChannelId: string;
+  slackChannelIds: string[];
   messageTemplate: string;
   approveButtonText: string;
   includedFields: string[];
