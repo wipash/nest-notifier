@@ -31,31 +31,59 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   const message = formatSlackMessage(record, config);
 
   // Send message to all specified Slack channels
-  const channelIds = config.slackChannelIds; // Assume this is now an array of channel IDs
+  const channelIds = config.slackChannelIds;
   console.log('Sending messages to channels:', channelIds);
 
-  const channelInfo: ChannelInfo[] = channelIds.map((channelId) => ({ channelId }));
-
-  const messagePromises = channelIds.map((channelId) => sendSlackMessage(env.SLACK_BOT_TOKEN, channelId, message, channelInfo));
+  const messagePromises = channelIds.map((channelId) => sendSlackMessage(env.SLACK_BOT_TOKEN, channelId, message, []));
 
   try {
     const results = await Promise.all(messagePromises);
     console.log('Messages sent successfully:', results);
 
-    // Update channelInfo with message timestamps
-    results.forEach((result, index) => {
-      if (channelInfo[index]) {
-        channelInfo[index].ts = result.ts;
-      }
-    });
+    // Prepare channelInfo with message timestamps
+    const channelInfo: ChannelInfo[] = results.map((result) => ({
+      channelId: result.channel,
+      ts: result.ts,
+    }));
 
-    console.log('Updated channel info:', channelInfo);
+    console.log('Channel info:', channelInfo);
+
+    // Update all messages with the complete channel info
+    await Promise.all(results.map((result) => updateSlackMessageMetadata(env.SLACK_BOT_TOKEN, result.channel, result.ts, channelInfo)));
 
     return new Response('Webhook processed', { status: 200 });
   } catch (error) {
     console.error('Error processing webhook:', error);
     return new Response('Error processing webhook', { status: 500 });
   }
+}
+
+async function updateSlackMessageMetadata(token: string, channelId: string, ts: string, channelInfo: ChannelInfo[]): Promise<void> {
+  const updateResponse = await fetch('https://slack.com/api/chat.update', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      channel: channelId,
+      ts: ts,
+      metadata: {
+        event_type: 'multi_channel_message',
+        event_payload: {
+          channel_info: channelInfo,
+        },
+      },
+    }),
+  });
+
+  if (!updateResponse.ok) {
+    const errorBody = await updateResponse.text();
+    console.error(`Failed to update Slack message metadata: ${updateResponse.status} ${updateResponse.statusText}`, errorBody);
+    throw new Error(`Failed to update Slack message metadata: ${updateResponse.statusText}`);
+  }
+
+  console.log(`Successfully updated metadata for message in channel ${channelId}`);
 }
 
 function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayload {
@@ -118,12 +146,6 @@ async function sendSlackMessage(
   const requestBody = JSON.stringify({
     channel: channelId,
     ...message,
-    metadata: {
-      event_type: 'multi_channel_message',
-      event_payload: {
-        channel_info: channelInfo,
-      },
-    },
   });
 
   console.log(`Sending Slack message to channel ${channelId}:`, requestBody);
@@ -169,7 +191,9 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
     let channelInfo: ChannelInfo[] = [];
     if (payload.message && payload.message.metadata && payload.message.metadata.event_payload) {
       channelInfo = payload.message.metadata.event_payload.channel_info || [];
-    } else {
+    }
+
+    if (channelInfo.length === 0) {
       console.warn('Message metadata not found or incomplete. Falling back to single channel update.');
       channelInfo = [
         {
@@ -181,7 +205,7 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
 
     console.log('Channel info for updates:', channelInfo);
 
-    // Update Slack message in all channels (or just the current channel if metadata is missing)
+    // Update Slack message in all channels
     const updatedMessage = formatUpdatedMessage(payload.message, action, userName);
     try {
       await Promise.all(
