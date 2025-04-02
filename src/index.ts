@@ -137,7 +137,12 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
 
     // Update the Slack message in the current channel
     const updatedMessage = formatUpdatedMessage(payload.message, action, userName);
-    await updateSlackMessage(env.SLACK_BOT_TOKEN, payload.channel.id, payload.message.ts, updatedMessage);
+    try {
+      await updateSlackMessage(env.SLACK_BOT_TOKEN, payload.channel.id, payload.message.ts, updatedMessage);
+    } catch (error) {
+      console.error('Failed to update Slack message during interaction handling:', error);
+      // Continue execution to return 200 to Slack, preventing retries
+    }
   }
 
   return new Response('Interaction handled', { status: 200 });
