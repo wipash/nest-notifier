@@ -52,48 +52,62 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
     text = text.replace(`{${key}}`, value as string);
   }
 
+  const blocks: any[] = [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: text,
+      },
+    },
+  ];
+
+  const actionElements: any[] = [];
+
+  if (config.primaryButton) {
+    actionElements.push({
+      type: 'button',
+      style: 'primary', // Default primary style
+      text: {
+        type: 'plain_text',
+        text: config.primaryButton.label,
+        emoji: true,
+      },
+      value: JSON.stringify({
+        recordId: record.id,
+        buttonConfig: config.primaryButton,
+      }),
+      action_id: 'primary_action',
+    });
+  }
+
+  if (config.secondaryButton) {
+    actionElements.push({
+      type: 'button',
+      // style: 'danger', // Or default? Let's use default for now
+      text: {
+        type: 'plain_text',
+        text: config.secondaryButton.label,
+        emoji: true,
+      },
+      value: JSON.stringify({
+        recordId: record.id,
+        buttonConfig: config.secondaryButton,
+      }),
+      action_id: 'secondary_action',
+    });
+  }
+
+  if (actionElements.length > 0) {
+    blocks.push({
+      type: 'actions',
+      elements: actionElements,
+    });
+  }
+
   return {
-    text: text,
-    blocks: [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: text,
-        },
-      },
-      {
-        type: 'actions',
-        elements: [
-          {
-            type: 'button',
-            style: 'primary',
-            text: {
-              type: 'plain_text',
-              text: config.approveButtonText,
-            },
-            value: JSON.stringify({
-              recordId: record.id,
-              statusFieldName: config.statusFieldName,
-            }),
-            action_id: 'approve',
-          },
-          {
-            type: 'button',
-            style: 'danger',
-            text: {
-              type: 'plain_text',
-              text: 'Ignore',
-            },
-            value: JSON.stringify({
-              recordId: record.id,
-              statusFieldName: config.statusFieldName,
-            }),
-            action_id: 'ignore',
-          },
-        ],
-      },
-    ],
+    text: text, // Fallback text
+    blocks: blocks,
   };
 }
 
@@ -125,50 +139,71 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
 
   console.log('Received Slack interaction payload:', JSON.stringify(payload, null, 2));
 
-  if (payload.type === 'block_actions' && (payload.actions[0].action_id === 'approve' || payload.actions[0].action_id === 'ignore')) {
-    const value = JSON.parse(payload.actions[0].value);
-    const action = payload.actions[0].action_id;
+  // Check if it's a block action and if the action_id matches our buttons
+  if (payload.type === 'block_actions' && payload.actions[0]?.action_id.endsWith('_action')) {
+    const action = payload.actions[0];
+    const value = JSON.parse(action.value);
+    const buttonConfig = value.buttonConfig; // Contains label, field, value
     const userName = payload.user.name;
+    const recordId = value.recordId;
 
-    if (action === 'approve') {
-      // Update Airtable record
-      await updateAirtableRecord(env, value.recordId, value.statusFieldName);
+    // Update Airtable only if field and value are defined for this button
+    if (buttonConfig.field && buttonConfig.value !== undefined) {
+      try {
+        await updateAirtableRecord(env, recordId, buttonConfig.field, buttonConfig.value);
+        console.log(`Airtable record ${recordId} updated: ${buttonConfig.field} = ${buttonConfig.value}`);
+      } catch (error) {
+        console.error(`Failed to update Airtable record ${recordId}:`, error);
+        // Optionally notify the user in Slack that the Airtable update failed
+        // For now, we continue to update the Slack message regardless
+      }
+    } else {
+        console.log(`Button "${buttonConfig.label}" clicked, no Airtable update configured.`);
     }
 
-    // Update the Slack message in the current channel
-    const updatedMessage = formatUpdatedMessage(payload.message, action, userName);
+    // Update the Slack message
+    const updatedMessage = formatUpdatedMessage(payload.message, buttonConfig.label, userName);
     try {
       await updateSlackMessage(env.SLACK_BOT_TOKEN, payload.channel.id, payload.message.ts, updatedMessage);
     } catch (error) {
       console.error('Failed to update Slack message during interaction handling:', error);
-      // Continue execution to return 200 to Slack, preventing retries
+      // Continue execution to return 200 OK to Slack
     }
+  } else {
+    console.log('Received unhandled interaction type or action_id:', payload.type, payload.actions?.[0]?.action_id);
   }
 
   return new Response('Interaction handled', { status: 200 });
 }
 
-function formatUpdatedMessage(originalMessage: any, action: string, userName: string): SlackPayload {
+function formatUpdatedMessage(originalMessage: any, buttonLabel: string, userName: string): SlackPayload {
   const updatedBlocks = originalMessage.blocks.map((block: any) => {
     if (block.type === 'actions') {
+      // Replace the actions block with a context or section block showing the action taken
       return {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `*${action === 'approve' ? 'Approved' : 'Ignored'}* by ${userName}`,
-        },
+        type: 'context', // Using context for less emphasis than section
+        elements: [
+            {
+                type: 'mrkdwn',
+                text: `*${buttonLabel}* by ${userName}`
+            }
+        ]
       };
     }
+    // Keep other blocks (like the original message section)
     return block;
   });
 
+  // Ensure we don't have duplicate context blocks if the button is clicked multiple times (though Slack might prevent this)
+  // A simple approach: keep the original text, modify blocks.
   return {
-    text: originalMessage.text,
+    text: originalMessage.text, // Keep original fallback text
     blocks: updatedBlocks,
   };
 }
 
-async function updateAirtableRecord(env: Env, recordId: string, statusFieldName: string): Promise<void> {
+async function updateAirtableRecord(env: Env, recordId: string, fieldName: string, newValue: any): Promise<void> {
+  console.log(`Updating Airtable record ${recordId}: setting field "${fieldName}" to`, newValue);
   const updateResponse = await fetch(`https://api.airtable.com/v0/${env.AIRTABLE_BASE_ID}/${env.AIRTABLE_TABLE_NAME}/${recordId}`, {
     method: 'PATCH',
     headers: {
@@ -177,14 +212,17 @@ async function updateAirtableRecord(env: Env, recordId: string, statusFieldName:
     },
     body: JSON.stringify({
       fields: {
-        [statusFieldName]: 'Approved',
+        [fieldName]: newValue, // Use dynamic field name and value
       },
     }),
   });
 
   if (!updateResponse.ok) {
+     const errorBody = await updateResponse.text();
+     console.error(`Failed to update Airtable record ${recordId}: ${updateResponse.status} ${updateResponse.statusText}`, errorBody);
     throw new Error(`Failed to update Airtable record: ${updateResponse.statusText}`);
   }
+   console.log(`Successfully updated Airtable record ${recordId}`);
 }
 
 async function updateSlackMessage(token: string, channelId: string, ts: string, updatedMessage: SlackPayload): Promise<void> {
