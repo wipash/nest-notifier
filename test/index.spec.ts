@@ -122,6 +122,70 @@ describe('Cloudflare Worker', () => {
       expect(response.status).toBe(500);
       expect(await response.text()).toBe('Error processing webhook');
     });
+
+    it('correctly substitutes field values in message templates', async () => {
+      // Mock record with various field types
+      const mockRecord: AirtableRecord = {
+        id: 'recTemplate123',
+        fields: {
+          Name: 'Test Organization',
+          Address: '123 Test Street',
+          Postcode: 'TE1 1ST',
+          NumberField: 42,
+          BooleanField: true,
+          // MissingField is intentionally not included
+        },
+      };
+
+      // Create template with placeholders for all fields, including a missing one
+      const messageTemplate = `
+*Organization: {Name}*
+Location: {Address}, {Postcode}
+Number: {NumberField}
+Boolean: {BooleanField}
+Missing: {MissingField}
+`;
+
+      const mockConfig: Config = {
+        slackChannelIds: ['C0123456789'],
+        messageTemplate: messageTemplate,
+        primaryButton: { label: 'Approve' },
+      };
+
+      const mockPayload = { record: mockRecord, config: mockConfig };
+
+      global.fetch = vi.fn().mockResolvedValue(new Response('OK'));
+
+      const request = new IncomingRequest('http://example.com', {
+        method: 'POST',
+        body: JSON.stringify(mockPayload),
+      });
+
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(request, mockEnv, ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+
+      // Get the actual message body sent to Slack API
+      const slackCall = (global.fetch as Mock).mock.calls.find(
+        call => call[0] === 'https://slack.com/api/chat.postMessage'
+      );
+      if (!slackCall) {
+        throw new Error('Slack API call for message not found');
+      }
+      const slackPayload = JSON.parse(slackCall[1].body);
+
+      // Check that fields were properly substituted
+      expect(slackPayload.text).toContain('Organization: Test Organization');
+      expect(slackPayload.text).toContain('Location: 123 Test Street, TE1 1ST');
+      expect(slackPayload.text).toContain('Number: 42');
+      expect(slackPayload.text).toContain('Boolean: true');
+
+      // Check that missing field placeholder remains as is
+      expect(slackPayload.text).toContain('Missing: {MissingField}');
+    });
+
   });
 
   describe('Slack Interaction Handler', () => {
