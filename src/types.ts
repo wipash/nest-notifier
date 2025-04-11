@@ -1,36 +1,31 @@
 export interface SlackPayload {
   text: string;
-  blocks?: any[]; // Consider defining more specific block types
+  blocks?: any[];
 }
 
 export interface AirtableRecord {
   id: string;
-  fields: { [key: string]: string | number | boolean | string[] | undefined }; // Allow undefined for optional fields
+  fields: { [key: string]: string | number | boolean | string[] | undefined };
 }
 
 export interface ButtonConfig {
   label: string;
   field?: string;
-  value?: string | any; // Allow any type for the value
+  value?: string | any;
 }
 
 export interface Config {
   slackChannelIds: string[];
   messageTemplate: string;
-  // approveButtonText: string; // Obsolete
-  // statusFieldName: string; // Obsolete - handled by button config
   primaryButton?: ButtonConfig;
   secondaryButton?: ButtonConfig;
-  // includedFields: string[]; // Keep if still used by Airtable script, remove if not
 }
 
-export interface SlackAPIResponse {
-  ok: boolean;
-  error?: string;
-  [key: string]: any;
-}
-
-export interface ChannelInfo {
-  channelId: string;
-  ts?: string;  // Optional because it's not set initially
+export interface Env {
+  SLACK_BOT_TOKEN: string;
+  AIRTABLE_API_KEY: string;
+  AIRTABLE_BASE_ID: string;
+  AIRTABLE_TABLE_NAME: string;
+  SLACK_SIGNING_SECRET: string;
+  AIRTABLE_WEBHOOK_SECRET: string;
 }
