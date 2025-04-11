@@ -60,6 +60,8 @@ For local development using `wrangler dev`, create a `.dev.vars` file in the pro
 # .dev.vars
 SLACK_BOT_TOKEN=xoxb-your-slack-bot-token
 AIRTABLE_API_KEY=patYourAirtablePersonalAccessTokenOrApiKey
+SLACK_SIGNING_SECRET=your_slack_signing_secret_here
+AIRTABLE_WEBHOOK_SECRET=your_generated_airtable_webhook_secret_here
 # AIRTABLE_BASE_ID and AIRTABLE_TABLE_NAME can also be put here
 # for local dev if you prefer, overriding wrangler.toml values locally.
 # AIRTABLE_BASE_ID=appXXXXXXXXXXXXXX
@@ -78,15 +80,19 @@ AIRTABLE_API_KEY=patYourAirtablePersonalAccessTokenOrApiKey
 
     wrangler secret put AIRTABLE_API_KEY
     # Paste your Airtable API Key/Personal Access Token when prompted
+
+    wrangler secret put SLACK_SIGNING_SECRET
+    wrangler secret put AIRTABLE_WEBHOOK_SECRE
     ```
 
 **Required Variables/Secrets Summary:**
 
-*   `SLACK_BOT_TOKEN`: Your Slack Bot User OAuth Token (starts with `xoxb-`). **Store as Secret.**
-*   `AIRTABLE_API_KEY`: Your Airtable Personal Access Token (preferred) or legacy API Key. **Store as Secret.**
+*   `SLACK_BOT_TOKEN`: Your Slack Bot User OAuth Token (starts with `xoxb-`). **Store as Cloudflare Secret.**
+*   `AIRTABLE_API_KEY`: Your Airtable Personal Access Token (preferred) or legacy API Key. **Store as Cloudflare Secret.**
+*   `SLACK_SIGNING_SECRET`: Your Slack App's Signing Secret (from Slack App settings -> Basic Information). **Store as Cloudflare Secret.**
+*   `AIRTABLE_WEBHOOK_SECRET`: A strong, random secret you generate for authenticating requests from Airtable. **Store as Cloudflare Secret.**
 *   `AIRTABLE_BASE_ID`: The ID of your Airtable Base (starts with `app`). Defined in `wrangler.toml` (or as Secret).
 *   `AIRTABLE_TABLE_NAME`: The exact name of the table within your Airtable Base. Defined in `wrangler.toml` (or as Secret).
-
 ## Running Locally
 
 To run the worker locally for development and testing:
@@ -157,6 +163,7 @@ To use the deployed worker, you need to configure Airtable and Slack, and then t
         *   Configure `PRIMARY_BUTTON_CONFIG` and `SECONDARY_BUTTON_CONFIG` as needed (set to `null` or `{}` to disable).
         *   Ensure `INPUT_VARIABLE_FOR_LINKED_IDS`, `LINKED_TABLE_NAME`, and `LINKED_TABLE_CHANNEL_ID_FIELD` correctly point to how your Slack Channel IDs are stored and linked.
         *   Ensure `INPUT_VARIABLE_FOR_RECORD_ID` matches the name you gave the record ID input variable in the UI.
+        *   Configure `AIRTABLE_WEBHOOK_SECRET` to match what was deployed to CloudFlare.
     *   **Test:** Use the "Test action" button to run the script with a sample record. Check the output logs for success messages or errors. Ensure the payload looks correct and the subsequent webhook call works.
 **2. Slack Setup**
 
