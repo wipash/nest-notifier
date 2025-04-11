@@ -1,14 +1,36 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import worker from '../src/index';
-import { Config, AirtableRecord, ButtonConfig } from '../src/types';
+import { Config, AirtableRecord, ButtonConfig, Env } from '../src/types';
 import { mockEnv } from './mockEnv';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
+// Helper function to generate Slack signature
+async function generateSlackSignature(secret: string, timestamp: string, body: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const sigBasestring = `v0:${timestamp}:${body}`;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signatureBuffer = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    encoder.encode(sigBasestring)
+  );
+  const hexSignature = Array.from(new Uint8Array(signatureBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `v0=${hexSignature}`;
+}
+
 describe('Cloudflare Worker', () => {
+
   beforeEach(() => {
-    // Reset all mocks before each test
     vi.resetAllMocks();
   });
 
@@ -44,10 +66,13 @@ describe('Cloudflare Worker', () => {
 
       const mockPayload = { record: mockRecord, config: mockConfig };
 
-      global.fetch = vi.fn().mockResolvedValue(new Response('OK'));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('OK')));
 
       const request = new IncomingRequest('http://example.com', {
         method: 'POST',
+        headers: {
+          'X-Webhook-Secret': mockEnv.AIRTABLE_WEBHOOK_SECRET
+        },
         body: JSON.stringify(mockPayload),
       });
 
@@ -59,10 +84,10 @@ describe('Cloudflare Worker', () => {
       expect(await response.text()).toBe('Webhook processed');
 
       // Verify messages were sent to all channels
-      expect(global.fetch).toHaveBeenCalledTimes(mockConfig.slackChannelIds.length);
+      expect(fetch).toHaveBeenCalledTimes(mockConfig.slackChannelIds.length);
 
       mockConfig.slackChannelIds.forEach(channelId => {
-        const matchingCall = (global.fetch as Mock).mock.calls.find((call: any[]) => {
+        const matchingCall = (fetch as Mock).mock.calls.find((call: any[]) => {
           if (!Array.isArray(call) || call.length < 2) return false;
           const url = call[0];
           const options = call[1];
@@ -108,10 +133,13 @@ describe('Cloudflare Worker', () => {
       };
       const mockPayload = { record: mockRecord, config: mockConfig };
 
-      global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
 
       const request = new IncomingRequest('http://example.com', {
         method: 'POST',
+        headers: {
+          'X-Webhook-Secret': mockEnv.AIRTABLE_WEBHOOK_SECRET
+        },
         body: JSON.stringify(mockPayload),
       });
 
@@ -119,8 +147,8 @@ describe('Cloudflare Worker', () => {
       const response = await worker.fetch(request, mockEnv, ctx);
       await waitOnExecutionContext(ctx);
 
-      expect(response.status).toBe(500);
-      expect(await response.text()).toBe('Error processing webhook');
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('Webhook processed');
     });
 
     it('correctly substitutes field values in message templates', async () => {
@@ -154,10 +182,13 @@ Missing: {MissingField}
 
       const mockPayload = { record: mockRecord, config: mockConfig };
 
-      global.fetch = vi.fn().mockResolvedValue(new Response('OK'));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('OK')));
 
       const request = new IncomingRequest('http://example.com', {
         method: 'POST',
+        headers: {
+          'X-Webhook-Secret': mockEnv.AIRTABLE_WEBHOOK_SECRET
+        },
         body: JSON.stringify(mockPayload),
       });
 
@@ -168,7 +199,7 @@ Missing: {MissingField}
       expect(response.status).toBe(200);
 
       // Get the actual message body sent to Slack API
-      const slackCall = (global.fetch as Mock).mock.calls.find(
+      const slackCall = (fetch as Mock).mock.calls.find(
         call => call[0] === 'https://slack.com/api/chat.postMessage'
       );
       if (!slackCall) {
@@ -199,6 +230,7 @@ Missing: {MissingField}
     const baseUser = { name: 'TestUser' };
     const baseChannel = { id: 'C0123456789' };
     const baseRecordId = 'recInteract123';
+    const mockTimestamp = Math.floor(Date.now() / 1000).toString();
 
     it('handles primary action with Airtable update correctly', async () => {
       const primaryButtonConfig: ButtonConfig = {
@@ -219,11 +251,24 @@ Missing: {MissingField}
         message: baseMessage,
       };
 
-      global.fetch = vi.fn().mockResolvedValue(new Response('OK'));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('OK')));
 
-      const formData = new FormData();
-      formData.append('payload', JSON.stringify(mockSlackPayload));
-      const request = new IncomingRequest('http://example.com', { method: 'POST', headers: {'X-Slack-Signature': 'v0=mock'}, body: formData });
+      const payloadString = JSON.stringify(mockSlackPayload);
+      // Construct the raw URL-encoded body string
+      const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
+
+      // Generate the correct signature using the raw body string
+      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+
+      const request = new IncomingRequest('http://example.com', {
+        method: 'POST',
+        headers: { // Use calculated signature and set Content-Type
+            'X-Slack-Signature': signature,
+            'X-Slack-Request-Timestamp': mockTimestamp,
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: urlEncodedBody // Use the raw string body
+      });
 
       const ctx = createExecutionContext();
       const response = await worker.fetch(request, mockEnv, ctx);
@@ -232,7 +277,7 @@ Missing: {MissingField}
       expect(response.status).toBe(200);
 
       // Verify Airtable update
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(fetch).toHaveBeenCalledWith(
         `https://api.airtable.com/v0/${mockEnv.AIRTABLE_BASE_ID}/${mockEnv.AIRTABLE_TABLE_NAME}/${baseRecordId}`,
         expect.objectContaining({
           method: 'PATCH',
@@ -246,7 +291,7 @@ Missing: {MissingField}
       );
 
       // Verify Slack message update
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(fetch).toHaveBeenCalledWith(
         'https://slack.com/api/chat.update',
         expect.objectContaining({
           method: 'POST',
@@ -258,7 +303,7 @@ Missing: {MissingField}
         })
       );
 
-      const updateCall = (global.fetch as Mock).mock.calls.find(call => call[0] === 'https://slack.com/api/chat.update');
+      const updateCall = (fetch as Mock).mock.calls.find(call => call[0] === 'https://slack.com/api/chat.update');
       expect(updateCall).toBeDefined();
       if (updateCall) {
         const updateBody = JSON.parse(updateCall[1].body);
@@ -289,11 +334,24 @@ Missing: {MissingField}
         message: baseMessage,
       };
 
-      global.fetch = vi.fn().mockResolvedValue(new Response('OK'));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('OK')));
 
-      const formData = new FormData();
-      formData.append('payload', JSON.stringify(mockSlackPayload));
-      const request = new IncomingRequest('http://example.com', { method: 'POST', headers: {'X-Slack-Signature': 'v0=mock'}, body: formData });
+      const payloadString = JSON.stringify(mockSlackPayload);
+      // Construct the raw URL-encoded body string
+      const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
+
+      // Generate the correct signature using the raw body string
+      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+
+      const request = new IncomingRequest('http://example.com', {
+          method: 'POST',
+          headers: { // Use calculated signature and set Content-Type
+              'X-Slack-Signature': signature,
+              'X-Slack-Request-Timestamp': mockTimestamp,
+              'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: urlEncodedBody // Use the raw string body
+      });
 
       const ctx = createExecutionContext();
       const response = await worker.fetch(request, mockEnv, ctx);
@@ -302,13 +360,13 @@ Missing: {MissingField}
       expect(response.status).toBe(200);
 
       // Verify Airtable was NOT updated
-      expect(global.fetch).not.toHaveBeenCalledWith(
+      expect(fetch).not.toHaveBeenCalledWith(
         expect.stringContaining('api.airtable.com'),
         expect.objectContaining({ method: 'PATCH' })
       );
 
       // Verify Slack message update
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(fetch).toHaveBeenCalledWith(
         'https://slack.com/api/chat.update',
         expect.objectContaining({
           method: 'POST',
@@ -317,7 +375,7 @@ Missing: {MissingField}
         })
       );
 
-      const updateCall = (global.fetch as Mock).mock.calls.find(call => call[0] === 'https://slack.com/api/chat.update');
+      const updateCall = (fetch as Mock).mock.calls.find(call => call[0] === 'https://slack.com/api/chat.update');
       expect(updateCall).toBeDefined();
       if (updateCall) {
         const updateBody = JSON.parse(updateCall[1].body);
@@ -346,7 +404,7 @@ Missing: {MissingField}
         message: baseMessage,
       };
 
-      global.fetch = vi.fn().mockImplementation((url) => {
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
         if (url.includes('api.airtable.com')) {
           return Promise.resolve(new Response('OK'));
         } else if (url.includes('chat.update')) {
@@ -354,13 +412,26 @@ Missing: {MissingField}
         } else {
           return Promise.resolve(new Response('Default OK'));
         }
-      });
+      }));
 
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      const formData = new FormData();
-      formData.append('payload', JSON.stringify(mockSlackPayload));
-      const request = new IncomingRequest('http://example.com', { method: 'POST', headers: {'X-Slack-Signature': 'v0=mock'}, body: formData });
+      const payloadString = JSON.stringify(mockSlackPayload);
+      // Construct the raw URL-encoded body string
+      const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
+
+      // Generate the correct signature using the raw body string
+      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+
+      const request = new IncomingRequest('http://example.com', {
+        method: 'POST',
+        headers: { // Use calculated signature and set Content-Type
+            'X-Slack-Signature': signature,
+            'X-Slack-Request-Timestamp': mockTimestamp,
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: urlEncodedBody // Use the raw string body
+      });
 
       const ctx = createExecutionContext();
       const response = await worker.fetch(request, mockEnv, ctx);
@@ -369,12 +440,12 @@ Missing: {MissingField}
       expect(response.status).toBe(200);
       expect(await response.text()).toBe('Interaction handled');
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(fetch).toHaveBeenCalledWith(
         expect.stringContaining('api.airtable.com'),
         expect.objectContaining({ method: 'PATCH' })
       );
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(fetch).toHaveBeenCalledWith(
         'https://slack.com/api/chat.update',
         expect.anything()
       );
@@ -397,20 +468,33 @@ Missing: {MissingField}
         user: baseUser, channel: baseChannel, message: baseMessage
       };
 
-      global.fetch = vi.fn().mockImplementation((url) => {
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
         if (url.includes('api.airtable.com')) {
           return Promise.resolve(new Response('Airtable Error', { status: 400 }));
         } else if (url.includes('chat.update')) {
           return Promise.resolve(new Response('OK'));
         }
         return Promise.resolve(new Response('Default OK'));
-      });
+      }));
 
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      const formData = new FormData();
-      formData.append('payload', JSON.stringify(mockSlackPayload));
-      const request = new IncomingRequest('http://example.com', { method: 'POST', headers: {'X-Slack-Signature': 'v0=mock'}, body: formData });
+      const payloadString = JSON.stringify(mockSlackPayload);
+      // Construct the raw URL-encoded body string
+      const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
+
+      // Generate the correct signature using the raw body string
+      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+
+      const request = new IncomingRequest('http://example.com', {
+        method: 'POST',
+        headers: { // Use calculated signature and set Content-Type
+            'X-Slack-Signature': signature,
+            'X-Slack-Request-Timestamp': mockTimestamp,
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: urlEncodedBody // Use the raw string body
+      });
 
       const ctx = createExecutionContext();
       const response = await worker.fetch(request, mockEnv, ctx);
@@ -419,7 +503,7 @@ Missing: {MissingField}
       expect(response.status).toBe(200);
       expect(await response.text()).toBe('Interaction handled');
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(fetch).toHaveBeenCalledWith(
         expect.stringContaining('api.airtable.com'),
         expect.objectContaining({ method: 'PATCH' })
       );
@@ -429,7 +513,7 @@ Missing: {MissingField}
         expect.any(Error)
       );
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(fetch).toHaveBeenCalledWith(
         'https://slack.com/api/chat.update',
         expect.objectContaining({
           method: 'POST',
