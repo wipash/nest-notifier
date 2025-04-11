@@ -5,43 +5,148 @@ export interface Env {
   AIRTABLE_API_KEY: string;
   AIRTABLE_BASE_ID: string;
   AIRTABLE_TABLE_NAME: string;
+  SLACK_SIGNING_SECRET: string;
+  AIRTABLE_WEBHOOK_SECRET: string;
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (request.method === 'POST') {
-      if (request.headers.get('X-Slack-Signature')) {
-        // Handle Slack interaction
-        return handleSlackInteraction(request, env);
-      } else {
-        // Handle webhook from Airtable
-        return handleWebhook(request, env);
-      }
-    } else {
+    if (request.method !== 'POST') {
       return new Response('Method not allowed', { status: 405 });
+    }
+
+    // Clone the request so we can read the body multiple times if needed
+    const clonedRequest = request.clone();
+
+    if (request.headers.get('X-Slack-Signature')) {
+      // --- Slack Request Verification ---
+      const isValid = await isValidSlackRequest(clonedRequest, env.SLACK_SIGNING_SECRET);
+      if (!isValid) {
+        console.warn('Invalid Slack signature received.');
+        return new Response('Invalid Slack signature', { status: 401 });
+      }
+      console.log('Slack signature verified successfully.');
+      // Use the original request for formData parsing as it hasn't been consumed
+      return handleSlackInteraction(request, env);
+    } else {
+      // --- Airtable Webhook Secret Verification ---
+      const expectedSecret = env.AIRTABLE_WEBHOOK_SECRET;
+      const receivedSecret = request.headers.get('X-Webhook-Secret'); // Or your chosen header name
+
+      if (!expectedSecret || !receivedSecret || !timingSafeEqual(expectedSecret, receivedSecret)) {
+        console.warn('Unauthorized webhook attempt: Invalid or missing secret.');
+        return new Response('Unauthorized', { status: 401 });
+      }
+       console.log('Airtable webhook secret verified successfully.');
+      // Use the original request for JSON parsing
+      return handleWebhook(request, env);
     }
   },
 };
 
-async function handleWebhook(request: Request, env: Env): Promise<Response> {
-  const payload = (await request.json()) as { record: AirtableRecord; config: Config };
-  const { record, config } = payload;
+// --- Slack Signature Verification Helper ---
+async function isValidSlackRequest(request: Request, secret: string): Promise<boolean> {
+  const timestamp = request.headers.get('X-Slack-Request-Timestamp');
+  const slackSignature = request.headers.get('X-Slack-Signature');
+  const body = await request.text(); // Read raw body from the cloned request
 
-  // Format the Slack message
-  const message = formatSlackMessage(record, config);
+  if (!timestamp || !slackSignature || !body) {
+    console.error('Missing Slack signature headers or body');
+    return false;
+  }
 
-  // Send message to all specified Slack channels
-  const channelIds = config.slackChannelIds;
-  console.log('Sending messages to channels:', channelIds);
+  // Prevent replay attacks by checking timestamp (e.g., within 5 minutes)
+  const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 60 * 5;
+  if (parseInt(timestamp, 10) < fiveMinutesAgo) {
+    console.error('Slack timestamp is too old:', timestamp);
+    return false;
+  }
 
-  const messagePromises = channelIds.map((channelId) => sendSlackMessage(env.SLACK_BOT_TOKEN, channelId, message));
+  const sigBasestring = `v0:${timestamp}:${body}`;
 
   try {
-    const results = await Promise.all(messagePromises);
-    console.log('Messages sent successfully:', results);
-    return new Response('Webhook processed', { status: 200 });
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    const signatureBuffer = await crypto.subtle.sign(
+        'HMAC',
+        key,
+        encoder.encode(sigBasestring)
+    );
+
+    // Convert ArrayBuffer to hex string
+    const hexSignature = Array.from(new Uint8Array(signatureBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    const expectedSignature = `v0=${hexSignature}`;
+
+    // Use timing-safe comparison
+    return timingSafeEqual(slackSignature, expectedSignature);
+
   } catch (error) {
+      console.error("Error verifying Slack signature:", error);
+      return false;
+  }
+}
+
+// --- Timing Safe String Comparison Helper ---
+// Basic implementation
+function timingSafeEqual(a: string, b: string): boolean {
+    if (a.length !== b.length) {
+        return false;
+    }
+
+    let result = 0;
+    for (let i = 0; i < a.length; i++) {
+        result |= a.charCodeAt(i) ^ b.charCodeAt(i); // XOR will be 0 if chars match
+    }
+
+    return result === 0;
+}
+
+async function handleWebhook(request: Request, env: Env): Promise<Response> {
+  try {
+    const payload = (await request.json()) as { record: AirtableRecord; config: Config };
+    const { record, config } = payload;
+
+    // Format the Slack message
+    const message = formatSlackMessage(record, config);
+
+    // Send message to all specified Slack channels
+    const channelIds = config.slackChannelIds;
+    console.log('Sending messages to channels:', channelIds);
+
+    const messagePromises = channelIds.map((channelId) => sendSlackMessage(env.SLACK_BOT_TOKEN, channelId, message));
+
+    // Using Promise.allSettled to handle potential individual message failures better
+    const results = await Promise.allSettled(messagePromises);
+    console.log('Message sending results:', results);
+
+    // Check if any promises were rejected
+    const hasFailures = results.some(result => result.status === 'rejected');
+    if (hasFailures) {
+        console.error('Some messages failed to send.');
+        // Decide if this constitutes a 500 or if partial success is OK
+        // For now, let's still return 200 if *any* message could potentially be sent,
+        // but log the errors clearly. A more robust system might track failures.
+        // return new Response('Webhook processed with some errors', { status: 500 }); // Option 1: Fail hard
+        return new Response('Webhook processed', { status: 200 }); // Option 2: Acknowledge processing
+    }
+
+    return new Response('Webhook processed', { status: 200 });
+  } catch (error: any) {
     console.error('Error processing webhook:', error);
+    // Catch JSON parsing errors or other unexpected issues
+    if (error instanceof SyntaxError) {
+        return new Response('Invalid JSON payload', { status: 400 });
+    }
     return new Response('Error processing webhook', { status: 500 });
   }
 }

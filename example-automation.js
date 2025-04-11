@@ -3,7 +3,6 @@
 //                 are configured in the Airtable Automation UI!
 // =======================================================================
 
-
 // --- Message Content ---
 // The template for the Slack message.
 // Use {FieldName} placeholders, where FieldName matches your Airtable field name exactly (case-sensitive).
@@ -53,6 +52,9 @@ const LINKED_TABLE_CHANNEL_ID_FIELD = "Slack channel ID"; // <-- CHANGE THIS
 // Name of the INPUT VARIABLE (configured in UI) that holds the Record ID of the triggering record.
 const INPUT_VARIABLE_FOR_RECORD_ID = "recordId"; // <-- CHANGE THIS to match Input Variable Name in UI
 
+// --- Webhook Secret ---
+const AIRTABLE_WEBHOOK_SECRET = "your_generated_airtable_webhook_secret_here"; // Replace with your actual secret
+
 // =======================================================================
 // END OF CONFIGURATION - Do not modify below unless you know what you are doing
 // =======================================================================
@@ -61,7 +63,7 @@ const INPUT_VARIABLE_FOR_RECORD_ID = "recordId"; // <-- CHANGE THIS to match Inp
 
 // --- Worker URL ---
 // The URL of your deployed Cloudflare Worker
-const WORKER_URL = "https://nest-notifier.it-6f6.workers.dev/"; // <-- CHANGE THIS
+const WORKER_URL = "https://nest-notifier.your-domain.workers.dev/"; // <-- CHANGE THIS
 
 let inputConfig = input.config();
 
@@ -105,8 +107,8 @@ try {
     }
     console.log("Successfully built fields object.");
 } catch (error) {
-     console.error(`Error building fields object for record ${recordId}:`, error);
-     return;
+    console.error(`Error building fields object for record ${recordId}:`, error);
+    return;
 }
 
 // --- Process Linked Record IDs for Channels ---
@@ -119,7 +121,7 @@ let validLinkedRecordIds = [];
 if (Array.isArray(linkedRecordIdsInput) && linkedRecordIdsInput.length > 0) {
     validLinkedRecordIds = linkedRecordIdsInput.filter(id => typeof id === 'string' && id.startsWith('rec'));
 } else {
-     console.warn(`Warning: Input variable '${INPUT_VARIABLE_FOR_LINKED_IDS}' is empty or not an array for record ${recordId}.`);
+    console.warn(`Warning: Input variable '${INPUT_VARIABLE_FOR_LINKED_IDS}' is empty or not an array for record ${recordId}.`);
 }
 
 // --- Fetch Channel IDs ---
@@ -127,7 +129,7 @@ let slackChannelIds = [];
 if (validLinkedRecordIds.length > 0) {
     slackChannelIds = await getSlackChannelIdsFromLinkedRecords(validLinkedRecordIds, LINKED_TABLE_NAME, LINKED_TABLE_CHANNEL_ID_FIELD);
 } else {
-     console.warn(`Warning: No valid linked record IDs found in input variable '${INPUT_VARIABLE_FOR_LINKED_IDS}' to fetch channel IDs from.`);
+    console.warn(`Warning: No valid linked record IDs found in input variable '${INPUT_VARIABLE_FOR_LINKED_IDS}' to fetch channel IDs from.`);
 }
 
 // Stop if no valid Slack channels were found
@@ -158,7 +160,10 @@ console.log(`Sending notification for record ${recordId} to channels: ${slackCha
 try {
     let response = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Secret': AIRTABLE_WEBHOOK_SECRET
+        },
         body: JSON.stringify(payload)
     });
     if (!response.ok) {
