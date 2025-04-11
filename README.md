@@ -219,7 +219,6 @@ To use the deployed worker, you need to configure Airtable and Slack, and then t
     *   Scroll down to "Scopes" -> "Bot Token Scopes".
     *   Add the following scopes:
         *   `chat:write`: Allows the bot to post and update messages.
-        *   (Interactions implicitly grant necessary permissions, but `users:read` might be useful if you want richer user info later).
 *   **Install App to Workspace:**
     *   Scroll back up on the "OAuth & Permissions" page and click "Install to Workspace".
     *   Authorize the installation.
