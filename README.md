@@ -125,90 +125,39 @@ To use the deployed worker, you need to configure Airtable and Slack, and then t
 
 **1. Airtable Setup**
 
-*   **Base and Table:** Ensure you have an Airtable Base and a Table matching the `AIRTABLE_BASE_ID` and `AIRTABLE_TABLE_NAME` configured in `wrangler.toml` or your secrets.
-*   **Fields:** Your table should contain the fields you want to display in Slack (referenced like `{FieldName}` in the `messageTemplate`) and any fields you intend to update via button clicks (referenced in `buttonConfig.field`). For example, you might have fields like `Name`, `RequestDetails`, `Status`.
+*   **Base and Table:** Ensure you have an Airtable Base and a Table matching the `AIRTABLE_BASE_ID` and `AIRTABLE_TABLE_NAME` configured in `wrangler.toml` or your secrets. This table is where your automation trigger will originate.
+*   **Fields:** Your table should contain:
+    *   The fields you want to display in Slack (referenced like `{FieldName}` in the `MESSAGE_TEMPLATE` within the automation script).
+    *   Any fields you intend to update via button clicks (referenced in `PRIMARY_BUTTON_CONFIG.field` / `SECONDARY_BUTTON_CONFIG.field` within the automation script, e.g., a `Status` field).
+    *   A linked record field connecting to another table that stores Slack Channel IDs.
 *   **API Key/Personal Access Token:**
     *   Go to your Airtable Account Developer Hub: [https://airtable.com/developers/web/guides/personal-access-tokens](https://airtable.com/developers/web/guides/personal-access-tokens)
     *   Create a new Personal Access Token.
     *   Grant it the following scopes for your target Base:
-        *   `data.records:read`
-        *   `data.records:write`
-        *   `schema.bases:read` (Good practice, helps read base schema if needed in future)
-    *   Copy the generated token (e.g., `patXXXXXXXXXXXXXX`) and store it as the `AIRTABLE_API_KEY` secret using Wrangler.
+        *   `data.records:read` (Required by the script to fetch record data)
+        *   `data.records:write` (Required by the worker to update records via buttons)
+        *   `schema.bases:read` (Required by the script to read table/field info)
+    *   Copy the generated token (e.g., `patXXXXXXXXXXXXXX`) and store it as the `AIRTABLE_API_KEY` secret using Wrangler (`wrangler secret put AIRTABLE_API_KEY`).
 *   **Triggering the Webhook (Airtable Automation):**
     *   Go to the "Automations" tab in your Airtable Base.
-    *   Create a new Automation. Choose a trigger (e.g., "When record matches conditions", "When record enters view").
+    *   Create a new Automation. Choose a trigger (e.g., "When record matches conditions", "When record enters view", "When record updated").
     *   Add an action: "Run script".
-    *   Paste the following script template into the script editor, modifying it as needed:
-
-    ```javascript
-    // Airtable Automation Script Example
-    let inputConfig = input.config(); // Get record data passed from the trigger step
-    let recordId = inputConfig.recordId; // Assuming trigger passes recordId
-
-    // --- Configuration for this specific notification ---
-    let config = {
-        // Get Channel IDs from Slack (see Slack Setup below)
-        slackChannelIds: ["C0XXXXXXXXX", "C0YYYYYYYYY"],
-        // Template for the main message body. Use {FieldName} placeholders.
-        messageTemplate: `:bell: *New Request:* {Name}\n*Details:* {RequestDetails}\n*Current Status:* {Status}`,
-        // Optional Primary Button Configuration
-        primaryButton: {
-            label: "Approve", // Text on the button
-            field: "Status",  // Airtable field to update on click
-            value: "Approved" // Value to set in the 'Status' field
-        },
-        // Optional Secondary Button Configuration
-        secondaryButton: {
-            label: "Reject",
-            field: "Status",
-            value: "Rejected"
-        }
-        // Add a button with no Airtable update:
-        // secondaryButton: { label: "Acknowledge" }
-    };
-    // --- End Configuration ---
-
-    // Fetch the full record data using the ID
-    let table = base.getTable("YourTableName"); // Replace with your actual table name
-    let record = await table.selectRecordAsync(recordId, {
-        fields: Object.keys(table.fieldsById) // Fetch all fields, or specify needed ones
-    });
-
-    if (!record) {
-        console.error("Record not found:", recordId);
-        return; // Exit if record doesn't exist
-    }
-
-    // Construct the payload for the Cloudflare Worker
-    let payload = {
-        record: {
-            id: record.id,
-            fields: record.fields
-        },
-        config: config
-    };
-
-    // Replace with your deployed Cloudflare Worker URL
-    let webhookUrl = "https://nest-notifier.<your-account-subdomain>.workers.dev";
-
-    console.log("Sending payload to worker:", payload);
-
-    // Send the POST request to the Cloudflare Worker
-    await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload)
-    });
-
-    console.log("Webhook sent.");
-    ```
-
-    *   Configure the script's input variables in the Automation sidebar (e.g., add `recordId` and set its value to `Airtable record ID` from the trigger step).
-    *   Test the script and the automation.
-
+    *   **Configure Script Input Variables:** This is much simpler with the current script version. In the "Input variables" section on the right panel of the "Run script" action:
+        *   Click "+ Add input variable".
+        *   Set the **Name** to match the `INPUT_VARIABLE_FOR_RECORD_ID` constant in the script (e.g., `recordId` by default).
+        *   Set the **Value** using the blue "+" button -> select the trigger record -> `Airtable record ID`.
+        *   Click "+ Add input variable" again.
+        *   Set the **Name** to match the `INPUT_VARIABLE_FOR_LINKED_IDS` constant in the script (e.g., `branches` by default).
+        *   Set the **Value** using the blue "+" button -> select the trigger record -> `Insert value from field` -> choose the field that links to your table containing Slack Channel IDs (e.g., the "Branches" field) -> `Make a new list of...` -> choose 'Linked record' -> ID
+    *   **Paste the Script:** Copy the contents of `example-automation.js` into the script editor.
+    *   **Customize Script Configuration:** Modify the `CONFIGURATION` block at the top of the pasted script:
+        *   Set `WORKER_URL` to your deployed Cloudflare Worker URL.
+        *   Set `TRIGGERING_TABLE_NAME` to the exact name of the table this automation runs on.
+        *   Customize `MESSAGE_TEMPLATE` with your desired Slack message format and `{FieldName}` placeholders.
+        *   Configure `PRIMARY_BUTTON_CONFIG` and `SECONDARY_BUTTON_CONFIG` as needed (set to `null` or `{}` to disable).
+        *   Ensure `INPUT_VARIABLE_FOR_LINKED_IDS`, `LINKED_TABLE_NAME`, and `LINKED_TABLE_CHANNEL_ID_FIELD` correctly point to how your Slack Channel IDs are stored and linked.
+        *   Ensure `INPUT_VARIABLE_FOR_RECORD_ID` matches the name you gave the record ID input variable in the UI.
+    *   **Test:** Use the "Test action" button to run the script with a sample record. Check the output logs for success messages or errors. Ensure the payload looks correct and the subsequent webhook call works.
 **2. Slack Setup**
 
 *   **Create a Slack App:**
