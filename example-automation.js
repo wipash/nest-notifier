@@ -34,8 +34,8 @@ const SECONDARY_BUTTON_CONFIG = {
 }; // <-- CHANGE THIS button configuration
 
 // --- Airtable Setup ---
-// Name of the table this automation is running on (the table containing the triggering record).
-const TRIGGERING_TABLE_NAME = "Organisations"; // <-- CHANGE THIS to match your table name
+// Name of the INPUT VARIABLE (configured in UI) that holds the name of the table this automation is running on.
+const INPUT_VARIABLE_FOR_TABLE_NAME = "triggeringTableName"; // <-- CHANGE THIS to match Input Variable Name in UI
 
 // --- Slack Channels (Fetched from Linked Records) ---
 // Name of the INPUT VARIABLE (configured in UI) that holds the linked record IDs from the triggering record.
@@ -75,21 +75,33 @@ if (!inputConfig[INPUT_VARIABLE_FOR_RECORD_ID] || typeof inputConfig[INPUT_VARIA
 const recordId = inputConfig[INPUT_VARIABLE_FOR_RECORD_ID];
 
 // --- Fetch the Triggering Record Object ---
-console.log(`Fetching data for record: ${recordId} from table '${TRIGGERING_TABLE_NAME}'...`);
+// Get table name from input variable
+const triggeringTableName = inputConfig[INPUT_VARIABLE_FOR_TABLE_NAME];
+if (!triggeringTableName) {
+    console.error(`Error: Input variable '${INPUT_VARIABLE_FOR_TABLE_NAME}' is missing. Configure it in the UI to pass the Airtable Table Name.`);
+    return;
+}
+
+console.log(`Fetching data for record: ${recordId} from table '${triggeringTableName}'...`);
 let triggeringRecord;
 let table; // Declare table variable here to access it later
+let baseId, tableId;
 try {
-    table = base.getTable(TRIGGERING_TABLE_NAME);
+    table = base.getTable(triggeringTableName);
+    baseId = base.id;
+    tableId = table.id;
+
     // Fetch the record object. We don't need to specify fields here.
     triggeringRecord = await table.selectRecordAsync(recordId);
 
     if (!triggeringRecord) {
-        throw new Error(`Record with ID ${recordId} not found in table '${TRIGGERING_TABLE_NAME}'.`);
+        throw new Error(`Record with ID ${recordId} not found in table '${triggeringTableName}'.`);
     }
     console.log(`Successfully fetched record object.`);
+    console.log(`Base ID: ${baseId}, Table ID: ${tableId}`);
 
 } catch (error) {
-    console.error(`Error fetching record ${recordId} from table '${TRIGGERING_TABLE_NAME}':`, error);
+    console.error(`Error fetching record ${recordId} from table '${triggeringTableName}':`, error);
     return;
 }
 
@@ -140,6 +152,8 @@ if (!slackChannelIds || slackChannelIds.length === 0) {
 
 // --- Prepare Payload ---
 const workerConfig = {
+    baseId: baseId, // Add base ID
+    tableId: tableId, // Add table ID
     slackChannelIds: slackChannelIds,
     messageTemplate: MESSAGE_TEMPLATE,
     ...(PRIMARY_BUTTON_CONFIG && PRIMARY_BUTTON_CONFIG.label && { primaryButton: PRIMARY_BUTTON_CONFIG }),
