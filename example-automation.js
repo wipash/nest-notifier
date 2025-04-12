@@ -34,8 +34,8 @@ const SECONDARY_BUTTON_CONFIG = {
 }; // <-- CHANGE THIS button configuration
 
 // --- Airtable Setup ---
-// Name of the INPUT VARIABLE (configured in UI) that holds the name of the table this automation is running on.
-const INPUT_VARIABLE_FOR_TABLE_NAME = "triggeringTableName"; // <-- CHANGE THIS to match Input Variable Name in UI
+// Name of the INPUT VARIABLE (configured in UI) that holds the Record URL of the triggering record.
+const INPUT_VARIABLE_FOR_RECORD_URL = "recordUrl"; // <-- CHANGE THIS to match Input Variable Name in UI
 
 // --- Slack Channels (Fetched from Linked Records) ---
 // Name of the INPUT VARIABLE (configured in UI) that holds the linked record IDs from the triggering record.
@@ -75,33 +75,53 @@ if (!inputConfig[INPUT_VARIABLE_FOR_RECORD_ID] || typeof inputConfig[INPUT_VARIA
 const recordId = inputConfig[INPUT_VARIABLE_FOR_RECORD_ID];
 
 // --- Fetch the Triggering Record Object ---
-// Get table name from input variable
-const triggeringTableName = inputConfig[INPUT_VARIABLE_FOR_TABLE_NAME];
-if (!triggeringTableName) {
-    console.error(`Error: Input variable '${INPUT_VARIABLE_FOR_TABLE_NAME}' is missing. Configure it in the UI to pass the Airtable Table Name.`);
+// Get record URL from input variable
+const recordUrl = inputConfig[INPUT_VARIABLE_FOR_RECORD_URL];
+if (!recordUrl || typeof recordUrl !== 'string' || !recordUrl.startsWith('https://airtable.com/')) {
+    console.error(`Error: Input variable '${INPUT_VARIABLE_FOR_RECORD_URL}' is missing or invalid. Configure it in the UI to pass the Airtable Record URL.`);
     return;
 }
 
-console.log(`Fetching data for record: ${recordId} from table '${triggeringTableName}'...`);
+// Extract Table ID from Record URL
+let extractedTableId = null;
+try {
+    const match = recordUrl.match(/\/+(tbl[a-zA-Z0-9]{14})\//);
+    if (match && match[1]) {
+        extractedTableId = match[1];
+    } else {
+        throw new Error('Could not extract Table ID (tbl...) from Record URL.');
+    }
+} catch (error) {
+    console.error(`Error processing Record URL '${recordUrl}':`, error);
+    return;
+}
+
+console.log(`Fetching data for record: ${recordId} from table ID: ${extractedTableId}...`);
 let triggeringRecord;
 let table; // Declare table variable here to access it later
 let baseId, tableId;
 try {
-    table = base.getTable(triggeringTableName);
+    // Use the extracted table ID
+    table = base.getTable(extractedTableId);
     baseId = base.id;
-    tableId = table.id;
+    tableId = table.id; // table.id should match extractedTableId
+
+    // Optional: Verify extracted ID matches table object ID
+    if (tableId !== extractedTableId) {
+        console.warn(`Warning: Extracted table ID (${extractedTableId}) does not match table object ID (${tableId}). Using table object ID.`);
+    }
 
     // Fetch the record object. We don't need to specify fields here.
     triggeringRecord = await table.selectRecordAsync(recordId);
 
     if (!triggeringRecord) {
-        throw new Error(`Record with ID ${recordId} not found in table '${triggeringTableName}'.`);
+        throw new Error(`Record with ID ${recordId} not found in table with ID '${tableId}'.`);
     }
-    console.log(`Successfully fetched record object.`);
+    console.log(`Successfully fetched record object from table '${table.name}' (ID: ${tableId}).`); // Log name too
     console.log(`Base ID: ${baseId}, Table ID: ${tableId}`);
 
 } catch (error) {
-    console.error(`Error fetching record ${recordId} from table '${triggeringTableName}':`, error);
+    console.error(`Error fetching record ${recordId} from table ID '${extractedTableId}':`, error);
     return;
 }
 
