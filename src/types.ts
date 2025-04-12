@@ -15,6 +15,8 @@ export interface ButtonConfig {
 }
 
 export interface Config {
+  baseId: string;
+  tableId: string;
   slackChannelIds: string[];
   messageTemplate: string;
   primaryButton?: ButtonConfig;
@@ -24,8 +26,6 @@ export interface Config {
 export interface Env {
   SLACK_BOT_TOKEN: string;
   AIRTABLE_API_KEY: string;
-  AIRTABLE_BASE_ID: string;
-  AIRTABLE_TABLE_NAME: string;
   SLACK_SIGNING_SECRET: string;
   AIRTABLE_WEBHOOK_SECRET: string;
 }

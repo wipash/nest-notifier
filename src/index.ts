@@ -3,8 +3,6 @@ import { SlackPayload, AirtableRecord, Config } from './types';
 export interface Env {
   SLACK_BOT_TOKEN: string;
   AIRTABLE_API_KEY: string;
-  AIRTABLE_BASE_ID: string;
-  AIRTABLE_TABLE_NAME: string;
   SLACK_SIGNING_SECRET: string;
   AIRTABLE_WEBHOOK_SECRET: string;
 }
@@ -181,6 +179,8 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
       value: JSON.stringify({
         recordId: record.id,
         buttonConfig: config.primaryButton,
+        baseId: config.baseId,
+        tableId: config.tableId,
       }),
       action_id: 'primary_action',
     });
@@ -189,7 +189,6 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
   if (config.secondaryButton) {
     actionElements.push({
       type: 'button',
-      // style: 'danger', // Or default? Let's use default for now
       text: {
         type: 'plain_text',
         text: config.secondaryButton.label,
@@ -198,6 +197,8 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
       value: JSON.stringify({
         recordId: record.id,
         buttonConfig: config.secondaryButton,
+        baseId: config.baseId,
+        tableId: config.tableId,
       }),
       action_id: 'secondary_action',
     });
@@ -251,11 +252,13 @@ async function handleSlackInteraction(request: Request, env: Env): Promise<Respo
     const buttonConfig = value.buttonConfig; // Contains label, field, value
     const userName = payload.user.name;
     const recordId = value.recordId;
+    const baseId = value.baseId;
+    const tableId = value.tableId;
 
     // Update Airtable only if field and value are defined for this button
     if (buttonConfig.field && buttonConfig.value !== undefined) {
       try {
-        await updateAirtableRecord(env, recordId, buttonConfig.field, buttonConfig.value);
+        await updateAirtableRecord(env.AIRTABLE_API_KEY, baseId, tableId, recordId, buttonConfig.field, buttonConfig.value);
         console.log(`Airtable record ${recordId} updated: ${buttonConfig.field} = ${buttonConfig.value}`);
       } catch (error) {
         console.error(`Failed to update Airtable record ${recordId}:`, error);
@@ -307,12 +310,12 @@ function formatUpdatedMessage(originalMessage: any, buttonLabel: string, userNam
   };
 }
 
-async function updateAirtableRecord(env: Env, recordId: string, fieldName: string, newValue: any): Promise<void> {
-  console.log(`Updating Airtable record ${recordId}: setting field "${fieldName}" to`, newValue);
-  const updateResponse = await fetch(`https://api.airtable.com/v0/${env.AIRTABLE_BASE_ID}/${env.AIRTABLE_TABLE_NAME}/${recordId}`, {
+async function updateAirtableRecord(apiKey: string, baseId: string, tableId: string, recordId: string, fieldName: string, newValue: any): Promise<void> {
+  console.log(`Updating Airtable record ${recordId} in base ${baseId}, table ${tableId}: setting field "${fieldName}" to`, newValue);
+  const updateResponse = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${recordId}`, {
     method: 'PATCH',
     headers: {
-      Authorization: `Bearer ${env.AIRTABLE_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({

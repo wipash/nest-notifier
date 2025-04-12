@@ -4,6 +4,10 @@ import worker from '../src/index';
 import { Config, AirtableRecord, ButtonConfig, Env } from '../src/types';
 import { mockEnv } from './mockEnv';
 
+// Define mock IDs
+const MOCK_BASE_ID = 'appMockBaseId';
+const MOCK_TABLE_ID = 'tblMockTableId';
+
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
 // Helper function to generate Slack signature
@@ -58,6 +62,8 @@ describe('Cloudflare Worker', () => {
       };
 
       const mockConfig: Config = {
+        baseId: MOCK_BASE_ID,
+        tableId: MOCK_TABLE_ID,
         slackChannelIds: ['C0123456789', 'C9876543210'],
         messageTemplate: `:sparkles: *New Request* :sparkles:\nName: {Name}\nAddress: {Address}`,
         primaryButton: mockPrimaryButton,
@@ -109,12 +115,12 @@ describe('Cloudflare Worker', () => {
               expect.objectContaining({
                 action_id: 'primary_action',
                 text: expect.objectContaining({ text: mockPrimaryButton.label }),
-                value: JSON.stringify({ recordId: mockRecord.id, buttonConfig: mockPrimaryButton })
+                value: JSON.stringify({ recordId: mockRecord.id, buttonConfig: mockPrimaryButton, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID })
               }),
               expect.objectContaining({
                 action_id: 'secondary_action',
                 text: expect.objectContaining({ text: mockSecondaryButton.label }),
-                value: JSON.stringify({ recordId: mockRecord.id, buttonConfig: mockSecondaryButton })
+                value: JSON.stringify({ recordId: mockRecord.id, buttonConfig: mockSecondaryButton, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID })
               })
             ])
           })
@@ -127,6 +133,8 @@ describe('Cloudflare Worker', () => {
         id: 'recError', fields: { Name: 'Error Org'}
       };
       const mockConfig: Config = {
+        baseId: MOCK_BASE_ID,
+        tableId: MOCK_TABLE_ID,
         slackChannelIds: ['CError123'],
         messageTemplate: 'Error template for {Name}',
         primaryButton: { label: 'Error Button' }
@@ -175,6 +183,8 @@ Missing: {MissingField}
 `;
 
       const mockConfig: Config = {
+        baseId: MOCK_BASE_ID,
+        tableId: MOCK_TABLE_ID,
         slackChannelIds: ['C0123456789'],
         messageTemplate: messageTemplate,
         primaryButton: { label: 'Approve' },
@@ -243,7 +253,7 @@ Missing: {MissingField}
         actions: [
           {
             action_id: 'primary_action',
-            value: JSON.stringify({ recordId: baseRecordId, buttonConfig: primaryButtonConfig }),
+            value: JSON.stringify({ recordId: baseRecordId, buttonConfig: primaryButtonConfig, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID }),
           },
         ],
         user: baseUser,
@@ -258,7 +268,7 @@ Missing: {MissingField}
       const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
 
       // Generate the correct signature using the raw body string
-      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+      const signature = await generateSlackSignature(mockEnv.SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
 
       const request = new IncomingRequest('http://example.com', {
         method: 'POST',
@@ -278,7 +288,7 @@ Missing: {MissingField}
 
       // Verify Airtable update
       expect(fetch).toHaveBeenCalledWith(
-        `https://api.airtable.com/v0/${mockEnv.AIRTABLE_BASE_ID}/${mockEnv.AIRTABLE_TABLE_NAME}/${baseRecordId}`,
+        `https://api.airtable.com/v0/${MOCK_BASE_ID}/${MOCK_TABLE_ID}/${baseRecordId}`,
         expect.objectContaining({
           method: 'PATCH',
           headers: expect.objectContaining({ Authorization: `Bearer ${mockEnv.AIRTABLE_API_KEY}` }),
@@ -326,7 +336,7 @@ Missing: {MissingField}
         actions: [
           {
             action_id: 'secondary_action',
-            value: JSON.stringify({ recordId: baseRecordId, buttonConfig: secondaryButtonConfig }),
+            value: JSON.stringify({ recordId: baseRecordId, buttonConfig: secondaryButtonConfig, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID }),
           },
         ],
         user: baseUser,
@@ -341,7 +351,7 @@ Missing: {MissingField}
       const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
 
       // Generate the correct signature using the raw body string
-      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+      const signature = await generateSlackSignature(mockEnv.SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
 
       const request = new IncomingRequest('http://example.com', {
           method: 'POST',
@@ -396,7 +406,7 @@ Missing: {MissingField}
         actions: [
           {
             action_id: 'primary_action',
-            value: JSON.stringify({ recordId: baseRecordId, buttonConfig: primaryButtonConfig }),
+            value: JSON.stringify({ recordId: baseRecordId, buttonConfig: primaryButtonConfig, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID }),
           },
         ],
         user: baseUser,
@@ -421,7 +431,7 @@ Missing: {MissingField}
       const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
 
       // Generate the correct signature using the raw body string
-      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+      const signature = await generateSlackSignature(mockEnv.SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
 
       const request = new IncomingRequest('http://example.com', {
         method: 'POST',
@@ -463,7 +473,7 @@ Missing: {MissingField}
       const mockSlackPayload = {
         type: 'block_actions',
         actions: [
-          { action_id: 'primary_action', value: JSON.stringify({ recordId: baseRecordId, buttonConfig: primaryButtonConfig }) }
+          { action_id: 'primary_action', value: JSON.stringify({ recordId: baseRecordId, buttonConfig: primaryButtonConfig, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID }) }
         ],
         user: baseUser, channel: baseChannel, message: baseMessage
       };
@@ -484,7 +494,7 @@ Missing: {MissingField}
       const urlEncodedBody = `payload=${encodeURIComponent(payloadString)}`;
 
       // Generate the correct signature using the raw body string
-      const signature = await generateSlackSignature((env as Env).SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
+      const signature = await generateSlackSignature(mockEnv.SLACK_SIGNING_SECRET, mockTimestamp, urlEncodedBody);
 
       const request = new IncomingRequest('http://example.com', {
         method: 'POST',
