@@ -12,12 +12,14 @@ const MESSAGE_TEMPLATE = `
 
 *Organization:* {Name}
 
-*Location Details:*
-> {Address}
+*Address:*
+> {Street}
+> {Suburb}
+> {City}
 > {Postcode}
 
 *Services Offered:*
-> {Services}
+> {Services offered}
 `; // <-- CHANGE THIS template as needed
 
 // --- Buttons ---
@@ -25,12 +27,12 @@ const MESSAGE_TEMPLATE = `
 const PRIMARY_BUTTON_CONFIG = {
     label: "Approve Application", // Text displayed on the button (Required if button is enabled)
     field: "Status",              // Airtable field name to update on click (Optional, case-sensitive)
-    value: "approved"             // Value to set in the specified 'field' (Optional)
+    value: "Approved"             // Value to set in the specified 'field' (Optional)
 }; // <-- CHANGE THIS button configuration
 const SECONDARY_BUTTON_CONFIG = {
     label: "Ignore",              // Text displayed on the button (Required if button is enabled)
-    field: "Status",              // Airtable field name to update on click (Optional, case-sensitive)
-    value: "ignored"             // Value to set in the specified 'field' (Optional)
+    //field: "Status",            // Airtable field name to update on click (Optional, case-sensitive)
+    //value: "ignored"            // Value to set in the specified 'field' (Optional)
 }; // <-- CHANGE THIS button configuration
 
 // --- Airtable Setup ---
@@ -46,7 +48,7 @@ const INPUT_VARIABLE_FOR_LINKED_IDS = "branches"; // <-- CHANGE THIS to match In
 const LINKED_TABLE_NAME = "Branches"; // <-- CHANGE THIS
 
 // Field name in the linked table that holds the actual Slack Channel ID string.
-const LINKED_TABLE_CHANNEL_ID_FIELD = "Slack channel ID"; // <-- CHANGE THIS
+const LINKED_TABLE_CHANNEL_ID_FIELD = "Branch channel ID"; // <-- CHANGE THIS
 
 // --- Record ID ---
 // Name of the INPUT VARIABLE (configured in UI) that holds the Record ID of the triggering record.
