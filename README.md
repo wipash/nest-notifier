@@ -91,8 +91,6 @@ AIRTABLE_WEBHOOK_SECRET=your_generated_airtable_webhook_secret_here
 *   `AIRTABLE_API_KEY`: Your Airtable Personal Access Token (preferred) or legacy API Key. **Store as Cloudflare Secret.**
 *   `SLACK_SIGNING_SECRET`: Your Slack App's Signing Secret (from Slack App settings -> Basic Information). **Store as Cloudflare Secret.**
 *   `AIRTABLE_WEBHOOK_SECRET`: A strong, random secret you generate for authenticating requests from Airtable. This secret must be included in the `X-Webhook-Secret` header of requests from your Airtable automation script. **Store as Cloudflare Secret.**
-*   `AIRTABLE_BASE_ID`: The ID of your Airtable Base (starts with `app`). Defined in `wrangler.toml` (or as Secret).
-*   `AIRTABLE_TABLE_NAME`: The exact name of the table within your Airtable Base. Defined in `wrangler.toml` (or as Secret).
 ## Running Locally
 
 To run the worker locally for development and testing:
@@ -131,15 +129,15 @@ To use the deployed worker, you need to configure Airtable and Slack, and then t
 
 **1. Airtable Setup**
 
-*   **Base and Table:** Ensure you have an Airtable Base and a Table matching the `AIRTABLE_BASE_ID` and `AIRTABLE_TABLE_NAME` configured in `wrangler.toml` or your secrets. This table is where your automation trigger will originate.
-*   **Fields:** Your table should contain:
+*   **Base and Table:** The worker interacts with the specific Base and Table determined by the `recordUrl` provided in the Airtable Automation script. Ensure your Airtable API Key has the necessary permissions for the target Base(s).
+*   **Fields:** Your trigger table should contain:
     *   The fields you want to display in Slack (referenced like `{FieldName}` in the `MESSAGE_TEMPLATE` within the automation script).
     *   Any fields you intend to update via button clicks (referenced in `PRIMARY_BUTTON_CONFIG.field` / `SECONDARY_BUTTON_CONFIG.field` within the automation script, e.g., a `Status` field).
     *   A linked record field connecting to another table that stores Slack Channel IDs.
 *   **API Key/Personal Access Token:**
     *   Go to your Airtable Account Developer Hub: [https://airtable.com/developers/web/guides/personal-access-tokens](https://airtable.com/developers/web/guides/personal-access-tokens)
     *   Create a new Personal Access Token.
-    *   Grant it the following scopes for your target Base:
+    *   Grant it the following scopes for your target Base(s):
         *   `data.records:read` (Required by the script to fetch record data)
         *   `data.records:write` (Required by the worker to update records via buttons)
         *   `schema.bases:read` (Required by the script to read table/field info)
@@ -148,23 +146,25 @@ To use the deployed worker, you need to configure Airtable and Slack, and then t
     *   Go to the "Automations" tab in your Airtable Base.
     *   Create a new Automation. Choose a trigger (e.g., "When record matches conditions", "When record enters view", "When record updated").
     *   Add an action: "Run script".
-    *   **Configure Script Input Variables:** This is much simpler with the current script version. In the "Input variables" section on the right panel of the "Run script" action:
+    *   **Configure Script Input Variables:** This is critical for the script to identify the correct record, table, and linked channels. In the "Input variables" section on the right panel of the "Run script" action:
         *   Click "+ Add input variable".
         *   Set the **Name** to match the `INPUT_VARIABLE_FOR_RECORD_ID` constant in the script (e.g., `recordId` by default).
         *   Set the **Value** using the blue "+" button -> select the trigger record -> `Airtable record ID`.
+        *   Click "+ Add input variable" again.
+        *   Set the **Name** to match the `INPUT_VARIABLE_FOR_RECORD_URL` constant in the script (e.g., `recordUrl` by default).
+        *   Set the **Value** using the blue "+" button -> select the trigger record -> `Airtable record URL`.
         *   Click "+ Add input variable" again.
         *   Set the **Name** to match the `INPUT_VARIABLE_FOR_LINKED_IDS` constant in the script (e.g., `branches` by default).
         *   Set the **Value** using the blue "+" button -> select the trigger record -> `Insert value from field` -> choose the field that links to your table containing Slack Channel IDs (e.g., the "Branches" field) -> `Make a new list of...` -> choose 'Linked record' -> ID
     *   **Paste the Script:** Copy the contents of `example-automation.js` into the script editor.
     *   **Customize Script Configuration:** Modify the `CONFIGURATION` block at the top of the pasted script:
         *   Set `WORKER_URL` to your deployed Cloudflare Worker URL.
-        *   Set `TRIGGERING_TABLE_NAME` to the exact name of the table this automation runs on.
-        *   Customize `MESSAGE_TEMPLATE` with your desired Slack message format and `{FieldName}` placeholders.
-        *   Configure `PRIMARY_BUTTON_CONFIG` and `SECONDARY_BUTTON_CONFIG` as needed (set to `null` or `{}` to disable).
-        *   Ensure `INPUT_VARIABLE_FOR_LINKED_IDS`, `LINKED_TABLE_NAME`, and `LINKED_TABLE_CHANNEL_ID_FIELD` correctly point to how your Slack Channel IDs are stored and linked.
-        *   Ensure `INPUT_VARIABLE_FOR_RECORD_ID` matches the name you gave the record ID input variable in the UI.
+        *   Customize `MESSAGE_TEMPLATE` with your desired Slack message format and `{FieldName}` placeholders (e.g., `{Name}`, `{Street}`, `{City}`, `{Postcode}`, `{Services offered}`).
+        *   Configure `PRIMARY_BUTTON_CONFIG` and `SECONDARY_BUTTON_CONFIG` as needed (e.g., set `value` for primary button to `"Approved"`, leave secondary button with only `label: "Ignore"`).
+        *   Ensure `INPUT_VARIABLE_FOR_RECORD_ID`, `INPUT_VARIABLE_FOR_RECORD_URL`, and `INPUT_VARIABLE_FOR_LINKED_IDS` match the names you gave the input variables in the UI.
+        *   Ensure `LINKED_TABLE_NAME`, and `LINKED_TABLE_CHANNEL_ID_FIELD` correctly point to how your Slack Channel IDs are stored and linked (e.g., `LINKED_TABLE_CHANNEL_ID_FIELD = "Branch channel ID"`).
         *   Configure `AIRTABLE_WEBHOOK_SECRET` to match what was deployed to CloudFlare. This secret will be sent in the `X-Webhook-Secret` header of the webhook request to authenticate it.
-    *   **Test:** Use the "Test action" button to run the script with a sample record. Check the output logs for success messages or errors. Ensure the payload looks correct and the subsequent webhook call works.
+    *   **Test:** Use the "Test action" button to run the script with a sample record. Check the output logs for success messages or errors (e.g., verifying extracted Table ID). Ensure the payload looks correct and the subsequent webhook call works.
 **2. Slack Setup**
 
 *   **Create a Slack App:**
@@ -200,42 +200,41 @@ As demonstrated in the Airtable Automation script, you need to send a `POST` req
     "id": "recXXXXXXXXXXXXXX", // The Airtable Record ID
     "fields": {
       // Key-value pairs of field names and their values from Airtable
-      "Name": "Example Project",
-      "RequestDetails": "Need approval for budget increase.",
-      "Status": "Pending",
-      "Submitter Email": "user@example.com"
+      "Name": "Example Org Application",
+      "Street": "123 Main St",
+      "Suburb": "Newtown",
+      "City": "Anytown",
+      "Postcode": "12345",
+      "Services offered": "Service A, Service B",
+      "Status": "Pending Verification"
       // ... other fields ...
     }
   },
   "config": {
+    "baseId": "appXXXXXXXXXXXXXX", // Added: The Airtable Base ID
+    "tableId": "tblXXXXXXXXXXXXXX", // Added: The Airtable Table ID
     "slackChannelIds": ["C0123456789", "C9876543210"], // Array of Slack Channel IDs
-    "messageTemplate": ":warning: *Action Required* on {Name}!\nDetails: {RequestDetails}\nSubmitted by: {Submitter Email}\nCurrent Status: *{Status}*", // Message format with {FieldName} placeholders
+    "messageTemplate": ":page_facing_up: *New Organization Application for Verification*\\n\\n*Organization:* {Name}\\n\\n*Address:*\\n> {Street}\\n> {Suburb}\\n> {City}\\n> {Postcode}\\n\\n*Services Offered:*\\n> {Services offered}", // Message format with {FieldName} placeholders matching example-automation.js
     "primaryButton": { // Optional
-      "label": "Approve Request", // Button text
+      "label": "Approve Application", // Button text
       "field": "Status", // Airtable field to update
-      "value": "Approved" // Value to set in the field
+      "value": "Approved" // Value to set in the field (matching example-automation.js)
     },
-    "secondaryButton": { // Optional
-      "label": "Reject Request",
-      "field": "Status",
-      "value": "Rejected"
+    "secondaryButton": { // Optional - Example without Airtable update (matching example-automation.js)
+      "label": "Ignore"
     }
-    // Example button that *doesn't* update Airtable:
-    // "secondaryButton": {
-    //   "label": "Acknowledge"
-    // }
   }
 }
 ```
 
 **4. Interaction Flow**
 
-When a user clicks a button ("Approve Request" or "Reject Request" in the example above):
+When a user clicks a button ("Approve Application" or "Ignore" in the example above):
 
 1.  Slack sends the interaction data to your worker's Request URL.
-2.  The worker extracts the `recordId`, `buttonConfig` (label, field, value) from the interaction payload.
-3.  If `field` and `value` are present in the `buttonConfig`, the worker updates the Airtable record (`recXXXXXXXXXXXXXX` in the example) by setting the `Status` field to either "Approved" or "Rejected".
-4.  The worker updates the original Slack message, replacing the buttons with text like "`*Approve Request* by SlackUserName`".
+2.  The worker extracts the `recordId`, `baseId`, `tableId`, and `buttonConfig` (label, field, value) from the interaction payload.
+3.  If `field` and `value` are present in the `buttonConfig` (like for "Approve Application"), the worker updates the Airtable record (`recXXXXXXXXXXXXXX` in the example, using the provided `baseId` and `tableId`) by setting the `Status` field to "Approved". If `field` and `value` are missing (like for "Ignore"), no Airtable update occurs.
+4.  The worker updates the original Slack message, replacing the buttons with text like "`*Approve Application* by SlackUserName`".
 
 ## Contributing
 
