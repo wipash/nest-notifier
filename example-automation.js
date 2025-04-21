@@ -1,3 +1,6 @@
+// Nest Notifier
+// Version 1.1 (dynamic channel fetching)
+
 // =======================================================================
 // CONFIGURATION - Modify the values below AND ensure corresponding inputs
 //                 are configured in the Airtable Automation UI!
@@ -50,10 +53,6 @@ const LINKED_TABLE_NAME = "Branches"; // <-- CHANGE THIS
 // Field name in the linked table that holds the actual Slack Channel ID string.
 const LINKED_TABLE_CHANNEL_ID_FIELD = "Branch channel ID"; // <-- CHANGE THIS
 
-// --- Record ID ---
-// Name of the INPUT VARIABLE (configured in UI) that holds the Record ID of the triggering record.
-const INPUT_VARIABLE_FOR_RECORD_ID = "recordId"; // <-- CHANGE THIS to match Input Variable Name in UI
-
 // --- Webhook Secret ---
 const AIRTABLE_WEBHOOK_SECRET = "your_generated_airtable_webhook_secret_here"; // Replace with your actual secret
 
@@ -69,14 +68,7 @@ const WORKER_URL = "https://nest-notifier.your-domain.workers.dev/"; // <-- CHAN
 
 let inputConfig = input.config();
 
-// --- Validate Record ID Input ---
-if (!inputConfig[INPUT_VARIABLE_FOR_RECORD_ID] || typeof inputConfig[INPUT_VARIABLE_FOR_RECORD_ID] !== 'string' || !inputConfig[INPUT_VARIABLE_FOR_RECORD_ID].startsWith('rec')) {
-    console.error(`Error: Input variable '${INPUT_VARIABLE_FOR_RECORD_ID}' is missing or invalid. Configure it in the UI to pass the Airtable Record ID.`);
-    return;
-}
-const recordId = inputConfig[INPUT_VARIABLE_FOR_RECORD_ID];
-
-// --- Fetch the Triggering Record Object ---
+// --- Validate and Extract from Record URL ---
 // Get record URL from input variable
 const recordUrl = inputConfig[INPUT_VARIABLE_FOR_RECORD_URL];
 if (!recordUrl || typeof recordUrl !== 'string' || !recordUrl.startsWith('https://airtable.com/')) {
@@ -84,20 +76,34 @@ if (!recordUrl || typeof recordUrl !== 'string' || !recordUrl.startsWith('https:
     return;
 }
 
-// Extract Table ID from Record URL
 let extractedTableId = null;
+let recordId = null;
 try {
-    const match = recordUrl.match(/\/+(tbl[a-zA-Z0-9]{14})\//);
-    if (match && match[1]) {
-        extractedTableId = match[1];
+    // Example URL: https://airtable.com/appt3vDzlFooenzk2/tblSGUVoWYt3SOGKH/reczd1N9MerOH0lIp
+    const urlMatch = recordUrl.match(/\/+(tbl[a-zA-Z0-9]{14})\/+(rec[a-zA-Z0-9]{14})/);
+    if (urlMatch && urlMatch[1] && urlMatch[2]) {
+        extractedTableId = urlMatch[1];
+        recordId = urlMatch[2];
     } else {
-        throw new Error('Could not extract Table ID (tbl...) from Record URL.');
+        throw new Error('Could not extract Table ID (tbl...) and Record ID (rec...) from Record URL.');
     }
 } catch (error) {
     console.error(`Error processing Record URL '${recordUrl}':`, error);
     return;
 }
 
+if (!recordId) {
+    // This check is technically redundant if the regex requires 'rec', but good practice
+    console.error(`Error: Could not extract Record ID from Record URL: ${recordUrl}`);
+    return;
+}
+if (!extractedTableId) {
+     // This check is technically redundant if the regex requires 'tbl', but good practice
+    console.error(`Error: Could not extract Table ID from Record URL: ${recordUrl}`);
+    return;
+}
+
+// --- Fetch the Triggering Record Object ---
 console.log(`Fetching data for record: ${recordId} from table ID: ${extractedTableId}...`);
 let triggeringRecord;
 let table; // Declare table variable here to access it later
@@ -113,8 +119,8 @@ try {
         console.warn(`Warning: Extracted table ID (${extractedTableId}) does not match table object ID (${tableId}). Using table object ID.`);
     }
 
-    // Fetch the record object. We don't need to specify fields here.
-    triggeringRecord = await table.selectRecordAsync(recordId);
+    // Fetch the record object using the extracted record ID.
+    triggeringRecord = await table.selectRecordAsync(recordId); // Use extracted recordId
 
     if (!triggeringRecord) {
         throw new Error(`Record with ID ${recordId} not found in table with ID '${tableId}'.`);

@@ -148,10 +148,7 @@ To use the deployed worker, you need to configure Airtable and Slack, and then t
     *   Add an action: "Run script".
     *   **Configure Script Input Variables:** This is critical for the script to identify the correct record, table, and linked channels. In the "Input variables" section on the right panel of the "Run script" action:
         *   Click "+ Add input variable".
-        *   Set the **Name** to match the `INPUT_VARIABLE_FOR_RECORD_ID` constant in the script (e.g., `recordId` by default).
-        *   Set the **Value** using the blue "+" button -> select the trigger record -> `Airtable record ID`.
-        *   Click "+ Add input variable" again.
-        *   Set the **Name** to match the `INPUT_VARIABLE_FOR_RECORD_URL` constant in the script (e.g., `recordUrl` by default).
+        *   Set the **Name** to match the `INPUT_VARIABLE_FOR_RECORD_URL` constant in the script (e.g., `recordUrl` by default). This URL will be used to extract both the Table ID and the Record ID.
         *   Set the **Value** using the blue "+" button -> select the trigger record -> `Airtable record URL`.
         *   Click "+ Add input variable" again.
         *   Set the **Name** to match the `INPUT_VARIABLE_FOR_LINKED_IDS` constant in the script (e.g., `branches` by default).
@@ -161,10 +158,10 @@ To use the deployed worker, you need to configure Airtable and Slack, and then t
         *   Set `WORKER_URL` to your deployed Cloudflare Worker URL.
         *   Customize `MESSAGE_TEMPLATE` with your desired Slack message format and `{FieldName}` placeholders (e.g., `{Name}`, `{Street}`, `{City}`, `{Postcode}`, `{Services offered}`).
         *   Configure `PRIMARY_BUTTON_CONFIG` and `SECONDARY_BUTTON_CONFIG` as needed (e.g., set `value` for primary button to `"Approved"`, leave secondary button with only `label: "Ignore"`).
-        *   Ensure `INPUT_VARIABLE_FOR_RECORD_ID`, `INPUT_VARIABLE_FOR_RECORD_URL`, and `INPUT_VARIABLE_FOR_LINKED_IDS` match the names you gave the input variables in the UI.
+        *   Ensure `INPUT_VARIABLE_FOR_RECORD_URL`, and `INPUT_VARIABLE_FOR_LINKED_IDS` match the names you gave the input variables in the UI.
         *   Ensure `LINKED_TABLE_NAME`, and `LINKED_TABLE_CHANNEL_ID_FIELD` correctly point to how your Slack Channel IDs are stored and linked (e.g., `LINKED_TABLE_CHANNEL_ID_FIELD = "Branch channel ID"`).
         *   Configure `AIRTABLE_WEBHOOK_SECRET` to match what was deployed to CloudFlare. This secret will be sent in the `X-Webhook-Secret` header of the webhook request to authenticate it.
-    *   **Test:** Use the "Test action" button to run the script with a sample record. Check the output logs for success messages or errors (e.g., verifying extracted Table ID). Ensure the payload looks correct and the subsequent webhook call works.
+    *   **Test:** Use the "Test action" button to run the script with a sample record. Check the output logs for success messages or errors (e.g., verifying extracted Table ID and Record ID). Ensure the payload looks correct and the subsequent webhook call works.
 **2. Slack Setup**
 
 *   **Create a Slack App:**
