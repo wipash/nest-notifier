@@ -1,5 +1,5 @@
 // Nest Notifier
-// Version 1.1 (dynamic channel fetching)
+// Version 1.1.0 (dynamic channel fetching)
 
 // =======================================================================
 // CONFIGURATION - Modify the values below AND ensure corresponding inputs
