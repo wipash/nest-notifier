@@ -106,7 +106,7 @@ if (!extractedTableId) {
 // --- Fetch the Triggering Record Object ---
 console.log(`Fetching data for record: ${recordId} from table ID: ${extractedTableId}...`);
 let triggeringRecord;
-let table; // Declare table variable here to access it later
+let table;
 let baseId, tableId;
 try {
     // Use the extracted table ID
@@ -218,9 +218,8 @@ try {
     console.error(`Network or runtime error during fetch call to ${WORKER_URL}:`, error);
 }
 
-// --- Helper Function (remains the same) ---
+// --- Helper Function ---
 async function getSlackChannelIdsFromLinkedRecords(linkedRecordIds, linkedTableName, channelIdFieldName) {
-    // ... (helper function code is unchanged) ...
     if (!Array.isArray(linkedRecordIds) || linkedRecordIds.length === 0) { console.warn("Helper: No linked IDs."); return []; }
     try {
         console.log(`Fetching Slack IDs from table '${linkedTableName}' (field '${channelIdFieldName}') for ${linkedRecordIds.length} linked records.`);
