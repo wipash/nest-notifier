@@ -1,4 +1,4 @@
-import { SlackPayload, AirtableRecord, Config } from './types';
+import { SlackPayload, Config } from './types';
 
 export interface Env {
   SLACK_BOT_TOKEN: string;
@@ -111,11 +111,11 @@ function timingSafeEqual(a: string, b: string): boolean {
 
 async function handleWebhook(request: Request, env: Env): Promise<Response> {
   try {
-    const payload = (await request.json()) as { record: AirtableRecord; config: Config };
-    const { record, config } = payload;
+    const payload = (await request.json()) as { config: Config };
+    const { config } = payload;
 
     // Format the Slack message
-    const message = formatSlackMessage(record, config);
+    const message = formatSlackMessage(config);
 
     // Send message to all specified Slack channels
     const channelIds = config.slackChannelIds;
@@ -149,11 +149,8 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   }
 }
 
-function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayload {
-  let text = config.messageTemplate;
-  for (const [key, value] of Object.entries(record.fields)) {
-    text = text.replace(`{${key}}`, value as string);
-  }
+function formatSlackMessage(config: Config): SlackPayload {
+  const text = config.messageText;
 
   const blocks: any[] = [
     {
@@ -177,7 +174,7 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
         emoji: true,
       },
       value: JSON.stringify({
-        recordId: record.id,
+        recordId: config.recordId,
         buttonConfig: config.primaryButton,
         baseId: config.baseId,
         tableId: config.tableId,
@@ -195,7 +192,7 @@ function formatSlackMessage(record: AirtableRecord, config: Config): SlackPayloa
         emoji: true,
       },
       value: JSON.stringify({
-        recordId: record.id,
+        recordId: config.recordId,
         buttonConfig: config.secondaryButton,
         baseId: config.baseId,
         tableId: config.tableId,

@@ -40,16 +40,6 @@ describe('Cloudflare Worker', () => {
 
   describe('Airtable Webhook Handler', () => {
     it('successfully processes webhook and sends messages with configured buttons', async () => {
-      const mockRecord: AirtableRecord = {
-        id: 'rec123',
-        fields: {
-          Name: 'Test Organization',
-          Address: '123 Test Street',
-          Postcode: 'TE1 1ST',
-          Services: 'Service 1\nService 2\nService 3',
-        },
-      };
-
       const mockPrimaryButton: ButtonConfig = {
         label: 'Approve',
         field: 'Status',
@@ -64,13 +54,14 @@ describe('Cloudflare Worker', () => {
       const mockConfig: Config = {
         baseId: MOCK_BASE_ID,
         tableId: MOCK_TABLE_ID,
+        recordId: 'rec123',
         slackChannelIds: ['C0123456789', 'C9876543210'],
-        messageTemplate: `:sparkles: *New Request* :sparkles:\nName: {Name}\nAddress: {Address}`,
+        messageText: `:sparkles: *New Request* :sparkles:\nName: Test Organization\nAddress: 123 Test Street`,
         primaryButton: mockPrimaryButton,
         secondaryButton: mockSecondaryButton
       };
 
-      const mockPayload = { record: mockRecord, config: mockConfig };
+      const mockPayload = { config: mockConfig };
 
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('OK')));
 
@@ -106,7 +97,7 @@ describe('Cloudflare Worker', () => {
         if (!matchingCall) throw new Error('Matching fetch call not found for channel: ' + channelId);
 
         const bodyJson = JSON.parse(matchingCall[1].body);
-        expect(bodyJson.text).toContain('Test Organization');
+        expect(bodyJson.text).toBe(mockConfig.messageText);
         expect(bodyJson.blocks).toEqual(expect.arrayContaining([
           expect.objectContaining({ type: 'section', text: expect.objectContaining({ type: 'mrkdwn' }) }),
           expect.objectContaining({
@@ -115,12 +106,12 @@ describe('Cloudflare Worker', () => {
               expect.objectContaining({
                 action_id: 'primary_action',
                 text: expect.objectContaining({ text: mockPrimaryButton.label }),
-                value: JSON.stringify({ recordId: mockRecord.id, buttonConfig: mockPrimaryButton, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID })
+                value: JSON.stringify({ recordId: mockConfig.recordId, buttonConfig: mockPrimaryButton, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID })
               }),
               expect.objectContaining({
                 action_id: 'secondary_action',
                 text: expect.objectContaining({ text: mockSecondaryButton.label }),
-                value: JSON.stringify({ recordId: mockRecord.id, buttonConfig: mockSecondaryButton, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID })
+                value: JSON.stringify({ recordId: mockConfig.recordId, buttonConfig: mockSecondaryButton, baseId: MOCK_BASE_ID, tableId: MOCK_TABLE_ID })
               })
             ])
           })
@@ -129,17 +120,15 @@ describe('Cloudflare Worker', () => {
     });
 
     it('handles webhook processing errors gracefully', async () => {
-      const mockRecord: AirtableRecord = {
-        id: 'recError', fields: { Name: 'Error Org'}
-      };
       const mockConfig: Config = {
         baseId: MOCK_BASE_ID,
         tableId: MOCK_TABLE_ID,
+        recordId: 'recError',
         slackChannelIds: ['CError123'],
-        messageTemplate: 'Error template for {Name}',
+        messageText: 'Error message for Error Org',
         primaryButton: { label: 'Error Button' }
       };
-      const mockPayload = { record: mockRecord, config: mockConfig };
+      const mockPayload = { config: mockConfig };
 
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
 
@@ -159,38 +148,25 @@ describe('Cloudflare Worker', () => {
       expect(await response.text()).toBe('Webhook processed');
     });
 
-    it('correctly substitutes field values in message templates', async () => {
-      // Mock record with various field types
-      const mockRecord: AirtableRecord = {
-        id: 'recTemplate123',
-        fields: {
-          Name: 'Test Organization',
-          Address: '123 Test Street',
-          Postcode: 'TE1 1ST',
-          NumberField: 42,
-          BooleanField: true,
-          // MissingField is intentionally not included
-        },
-      };
-
-      // Create template with placeholders for all fields, including a missing one
-      const messageTemplate = `
-*Organization: {Name}*
-Location: {Address}, {Postcode}
-Number: {NumberField}
-Boolean: {BooleanField}
-Missing: {MissingField}
+    it('sends messages with pre-processed text', async () => {
+      // Create message text (already processed from template on the client)
+      const messageText = `
+*Organization: Test Organization*
+Location: 123 Test Street, TE1 1ST
+Number: 42
+Boolean: true
 `;
 
       const mockConfig: Config = {
         baseId: MOCK_BASE_ID,
         tableId: MOCK_TABLE_ID,
+        recordId: 'recTemplate123',
         slackChannelIds: ['C0123456789'],
-        messageTemplate: messageTemplate,
+        messageText: messageText,
         primaryButton: { label: 'Approve' },
       };
 
-      const mockPayload = { record: mockRecord, config: mockConfig };
+      const mockPayload = { config: mockConfig };
 
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('OK')));
 
@@ -217,14 +193,11 @@ Missing: {MissingField}
       }
       const slackPayload = JSON.parse(slackCall[1].body);
 
-      // Check that fields were properly substituted
+      // Check that the text was passed directly without processing
       expect(slackPayload.text).toContain('Organization: Test Organization');
       expect(slackPayload.text).toContain('Location: 123 Test Street, TE1 1ST');
       expect(slackPayload.text).toContain('Number: 42');
       expect(slackPayload.text).toContain('Boolean: true');
-
-      // Check that missing field placeholder remains as is
-      expect(slackPayload.text).toContain('Missing: {MissingField}');
     });
 
   });

@@ -3,11 +3,6 @@ export interface SlackPayload {
   blocks?: any[];
 }
 
-export interface AirtableRecord {
-  id: string;
-  fields: { [key: string]: string | number | boolean | string[] | undefined };
-}
-
 export interface ButtonConfig {
   label: string;
   field?: string;
@@ -17,8 +12,9 @@ export interface ButtonConfig {
 export interface Config {
   baseId: string;
   tableId: string;
+  recordId: string;
   slackChannelIds: string[];
-  messageTemplate: string;
+  messageText: string;
   primaryButton?: ButtonConfig;
   secondaryButton?: ButtonConfig;
 }
