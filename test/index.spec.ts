@@ -1,7 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import worker from '../src/index';
-import { Config, AirtableRecord, ButtonConfig, Env } from '../src/types';
+import { Config, ButtonConfig, Env } from '../src/types';
 import { mockEnv } from './mockEnv';
 
 // Define mock IDs
